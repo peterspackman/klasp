@@ -20,8 +20,8 @@ one source runs on CPUs, NVIDIA and AMD GPUs, and uses MPI across nodes.
 
 ## Building
 
-Requires a C++20 compiler, CMake ≥ 3.22, MPI and FFTW 3. Every other dependency
-is fetched at configure time.
+Requires a C++20 compiler, CMake ≥ 3.22 and MPI. Every other dependency is
+fetched at configure time.
 
 ```bash
 cmake -B build -DKLASP_BACKEND=openmp     # serial | openmp | cuda | hip
