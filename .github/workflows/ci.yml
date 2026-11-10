@@ -1,0 +1,161 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch makes the older run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Default configuration; serial so failures are reproducible.
+          - name: serial + PET
+            backend: serial
+            pet: 'ON'
+          # Only job that compiles the code without KLASP_HAS_PET.
+          - name: serial, no PET
+            backend: serial
+            pet: 'OFF'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build libopenmpi-dev openmpi-bin
+
+      - name: Cache CPM sources
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/CPM
+          key: cpm-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'tests/CMakeLists.txt', 'python/CMakeLists.txt') }}
+          restore-keys: cpm-${{ runner.os }}-
+
+      # ccache hashes -march=native literally; key the cache on its expansion so
+      # objects are only restored onto a CPU that can run them.
+      - name: Identify the build CPU
+        id: cpu
+        run: |
+          set -euo pipefail
+          key=$(gcc -march=native -Q --help=target | md5sum | cut -c1-12)
+          test -n "$key"
+          echo "build CPU key: $key"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+
+      - name: Cache compiler output
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ matrix.backend }}-pet${{ matrix.pet }}-${{ steps.cpu.outputs.key }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ matrix.backend }}-pet${{ matrix.pet }}-${{ steps.cpu.outputs.key }}-
+
+      - name: Install ccache
+        run: sudo apt-get install -y --no-install-recommends ccache
+
+      - name: Configure
+        env:
+          CPM_SOURCE_CACHE: ~/.cache/CPM
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DKLASP_BACKEND=${{ matrix.backend }} \
+            -DKLASP_ENABLE_PET=${{ matrix.pet }} \
+            -DKLASP_BUILD_TESTS=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build build -j $(nproc)
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -j $(nproc)
+
+      - name: Smoke-test the CLI
+        run: |
+          set -euo pipefail
+          KLASP=./build/klasp
+          $KLASP --help > /dev/null
+
+          echo "== energy: every shipped crystal, single-point =="
+          $KLASP energy example-inputs/urea_crystal.json \
+                        example-inputs/ethylcarbamate.json \
+                        example-inputs/paracetamol.json
+
+          echo "== energy --relax =="
+          $KLASP energy example-inputs/urea_crystal.json --relax --iterations 50
+
+          echo "== fdcheck must pass, and must be able to fail =="
+          $KLASP fdcheck example-inputs/urea_crystal.json
+          if $KLASP fdcheck example-inputs/urea_crystal.json \
+               --abs-tol 0 --rel-tol 1e-12 > /dev/null 2>&1; then
+            echo "fdcheck reported success under an impossible tolerance"; exit 1
+          fi
+
+          echo "== a small CSP, then the database tools over it =="
+          $KLASP csp example-inputs/acetic_acid.json --sg 14 --target 60 -o ci-run
+          $KLASP summary ci-run/csp.db
+          $KLASP extract ci-run/csp.db -o ci-cif
+          $KLASP prune   ci-run/csp.db -o ci-pruned
+          test -s ci-cif/structures.cif
+          test -s ci-pruned/unique_structures.csv
+
+          echo "== compack, over the landscape and over the CIFs it wrote =="
+          $KLASP compack ci-run/csp.db --top 10 | tee compack.txt
+          grep -q "distinct packing" compack.txt
+          $KLASP compack ci-cif/structures.cif | tee compack-cif.txt
+          grep -q "distinct packing" compack-cif.txt
+
+          echo "== compact reclaims pages without losing rows =="
+          before=$($KLASP summary ci-run/csp.db | sed -nE 's/.*[^0-9]([0-9]+) total structures.*/\1/p' | head -1)
+          $KLASP compact ci-run/csp.db
+          after=$($KLASP summary ci-run/csp.db | sed -nE 's/.*[^0-9]([0-9]+) total structures.*/\1/p' | head -1)
+          if [ "$before" != "$after" ]; then
+            echo "compact changed the row count: $before -> $after"; exit 1
+          fi
+
+          echo "== generator-only =="
+          $KLASP csp example-inputs/acetic_acid.json --sg 14 --target 60 --generate-only -o ci-gen
+          $KLASP extract ci-gen/csp.db -o ci-gen-cif --keep-catastrophes
+          test -s ci-gen-cif/structures.cif
+
+          echo "== resume tops the target up rather than doubling it =="
+          $KLASP csp example-inputs/acetic_acid.json --sg 14 --target 120 --resume -o ci-run
+          $KLASP summary ci-run/csp.db | tee resumed.txt
+          # A range: generation can overshoot by one block. A resume must top up
+          # to ~120, not the ~180 a re-run from scratch would leave.
+          resumed=$(sed -nE 's/.*[^0-9]([0-9]+) total structures.*/\1/p' resumed.txt | head -1)
+          echo "resumed total: $resumed"
+          if [ -z "$resumed" ] || [ "$resumed" -lt 120 ] || [ "$resumed" -ge 160 ]; then
+            echo "expected ~120 total structures after resume, got '$resumed'"; exit 1
+          fi
+
+          echo "== flags that no longer exist, or that the default path cannot honour =="
+          for bad in "--min-discovery 0.05" "--collision spectral" "--trajectory" "--wolf"; do
+            if $KLASP csp example-inputs/acetic_acid.json --sg 14 --target 4 \
+                 -o ci-bad $bad > /dev/null 2>&1; then
+              echo "csp accepted '$bad', which it should refuse"; exit 1
+            fi
+          done
+
+      - name: Smoke-test the MPI path
+        run: |
+          set -euo pipefail
+          # More than one rank exercises the result wire format and rank-0 drainer.
+          mpirun --oversubscribe -n 3 --allow-run-as-root \
+            ./build/klasp csp example-inputs/acetic_acid.json --sg 2,14 --target 80 -o ci-mpi
+          ./build/klasp summary ci-mpi/csp.db

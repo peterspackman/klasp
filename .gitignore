@@ -1,0 +1,29 @@
+# Build
+build/
+build-*/
+.cache/
+CMakeUserPresets.json
+compile_commands.json
+Testing/
+__pycache__/
+*.egg-info/
+
+# Run output
+*.db
+*.db-wal
+*.db-shm
+*.log
+status.txt
+slurm-*.out
+
+# Model weights are distributed separately
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+models/
+
+# Editors and OS
+.DS_Store
+.vscode/
+.idea/

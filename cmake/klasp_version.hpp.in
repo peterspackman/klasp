@@ -1,0 +1,14 @@
+#pragma once
+
+// Generated at build time by cmake/klasp_version_write.cmake.
+// Do not edit by hand; edit the template klasp_version.hpp.in instead.
+
+namespace klasp {
+
+constexpr const char* GIT_HASH       = "@KLASP_GIT_HASH@";
+constexpr const char* GIT_HASH_SHORT = "@KLASP_GIT_HASH_SHORT@";
+constexpr const char* GIT_BRANCH     = "@KLASP_GIT_BRANCH@";
+constexpr bool        GIT_DIRTY      = @KLASP_GIT_DIRTY@;
+constexpr const char* BUILD_DATE     = "@KLASP_BUILD_DATE@";
+
+}  // namespace klasp

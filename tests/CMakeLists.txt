@@ -1,0 +1,91 @@
+CPMAddPackage(
+    NAME Catch2
+    VERSION 3.16.0
+    GITHUB_REPOSITORY catchorg/Catch2
+)
+
+list(APPEND CMAKE_MODULE_PATH ${Catch2_SOURCE_DIR}/extras)
+include(Catch)
+
+# Extra libraries beyond klasp_core may be passed after the name. Tests link
+# klasp_core, not klasp_mpi.
+function(klasp_add_test name)
+    add_executable(${name} ${name}.cpp)
+    target_link_libraries(${name} PRIVATE klasp_core Catch2::Catch2WithMain ${ARGN})
+    catch_discover_tests(${name})
+endfunction()
+
+klasp_add_test(test_cell)
+klasp_add_test(test_buckingham)
+klasp_add_test(test_ewald)
+klasp_add_test(test_rotation)
+klasp_add_test(test_mat3)
+klasp_add_test(test_gradients)
+klasp_add_test(test_molecule)
+klasp_add_test(test_multipole)
+klasp_add_test(test_batch)
+klasp_add_test(test_ff_determinism)
+klasp_add_test(test_contraction_collapse)
+klasp_add_test(test_dipole_stage)
+klasp_add_test(test_csp)
+klasp_add_test(test_sphere_mtv)
+klasp_add_test(test_csp_generate)
+klasp_add_test(test_fft_pack)
+klasp_add_test(test_pdd)
+klasp_add_test(test_powder_bound)
+klasp_add_test(test_flex_descriptors)
+klasp_add_test(test_trust_region)
+klasp_add_test(test_pet_dof)
+klasp_add_test(test_scheduling)
+klasp_add_test(test_work_counters)
+klasp_add_test(test_result_msg)
+klasp_add_test(test_strain_gradient)
+klasp_add_test(test_strain_basis)
+klasp_add_test(test_symmetry_gradient)
+klasp_add_test(test_optimizer)
+klasp_add_test(test_status)
+klasp_add_test(test_stream)
+klasp_add_test(test_stream_mc)
+klasp_add_test(test_cli_options klasp_cli)
+# Runs the klasp binary for exit statuses and config-file refusals.
+add_dependencies(test_cli_options klasp)
+target_compile_definitions(test_cli_options
+    PRIVATE KLASP_BINARY_PATH="$<TARGET_FILE:klasp>")
+klasp_add_test(test_strain_hessian)
+klasp_add_test(test_run_state)
+klasp_add_test(test_db_stage sqlite_modern_cpp)
+klasp_add_test(test_converged sqlite_modern_cpp)
+klasp_add_test(test_warnings)
+klasp_add_test(test_vacuum)
+klasp_add_test(test_niggli)
+klasp_add_test(test_interp)
+klasp_add_test(test_pair_model)
+klasp_add_test(test_config)
+klasp_add_test(test_log)
+klasp_add_test(test_rigid_press)
+klasp_add_test(test_trigonal_expand)
+klasp_add_test(test_pet_neighbors)
+klasp_add_test(test_cif)
+klasp_add_test(test_cif_reader)
+klasp_add_test(test_cif_packing)
+klasp_add_test(test_settings)
+klasp_add_test(test_potentials)
+klasp_add_test(test_cocrystal)
+klasp_add_test(test_compack)
+klasp_add_test(test_wyckoff)
+klasp_add_test(test_self_symmetry)
+klasp_add_test(test_wyckoff_energy)
+klasp_add_test(test_wyckoff_yield)
+
+klasp_add_test(test_ff_structure)
+target_compile_definitions(test_ff_structure PRIVATE KLASP_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
+klasp_add_test(test_structure_generation)
+target_compile_definitions(test_structure_generation PRIVATE KLASP_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
+# Shells out to klasp for the reference so the test need not link MPI.
+klasp_add_test(test_local_csp sqlite_modern_cpp)
+add_dependencies(test_local_csp klasp)
+target_compile_definitions(test_local_csp PRIVATE
+    KLASP_BINARY_PATH="$<TARGET_FILE:klasp>"
+    KLASP_SOURCE_DIR="${CMAKE_SOURCE_DIR}")

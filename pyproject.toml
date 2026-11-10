@@ -1,0 +1,29 @@
+[build-system]
+requires = ["scikit-build-core>=0.10"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "klasp"
+version = "0.1.0"
+description = "Crystal structure prediction on Kokkos, as a Python module"
+readme = "python/README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+
+# No runtime dependencies: results are plain Python lists, not numpy arrays.
+dependencies = []
+
+[tool.scikit-build]
+minimum-version = "0.10"
+cmake.version = ">=3.22"
+build-dir = "build/wheel/{wheel_tag}"
+
+# The extension module is added beside this package by python/CMakeLists.txt.
+wheel.packages = ["python/klasp"]
+
+# Only the Python module is installed under this component.
+install.components = ["python"]
+
+[tool.scikit-build.cmake.define]
+KLASP_BUILD_PYTHON = "ON"
+KLASP_BUILD_TESTS = "OFF"
