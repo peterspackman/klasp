@@ -1,4 +1,9 @@
-# klasp
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/klasp-logo-dark.png">
+    <img src="docs/klasp-logo.png" alt="klasp" width="420">
+  </picture>
+</p>
 
 GPU-accelerated crystal structure prediction for rigid molecules.
 
