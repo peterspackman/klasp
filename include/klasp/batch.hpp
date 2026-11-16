@@ -320,6 +320,10 @@ struct BatchGeometryT : CellStateT<Space> {
 
     int n_batch = 0;
     int n_atoms = 0;    // = n_symops * n_sites_per_mol, the padded stride
+    // Added to the real-space cutoff when sizing max_shift: twice the largest
+    // molecular radius, so a site pair within the cutoff is reached from COMs
+    // that are up to a cell apart.
+    RealType shift_pad = 0;
 
     // Slots to evaluate; zero extent means all of [0, n_batch). Empty slots must be
     // masked out: their placeholder cell enumerates a huge number of images.

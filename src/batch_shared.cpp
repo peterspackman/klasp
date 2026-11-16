@@ -32,6 +32,7 @@ void batch_update_cell_from_strain(const ForceField& ff,
     auto strain_v  = dofs.strain;
     auto b_mshift  = geom.max_shift;
     auto b_mhkl    = geom.max_hkl;
+    const RealType shift_pad = geom.shift_pad;
 
     auto b_kappa   = geom.kappa;
     // Captured by value: a device lambda must not capture a reference into the caller.
@@ -88,7 +89,7 @@ void batch_update_cell_from_strain(const ForceField& ff,
 
             b_vol(b) = Kokkos::abs(det);
 
-            const RealType cutoff = model.real_space_cutoff(b_kappa(b));
+            const RealType cutoff = model.real_space_cutoff(b_kappa(b)) + shift_pad;
 
             // Grow the hkl box to keep covering the fixed gmax sphere as the cell changes;
             // kappa is held fixed.
@@ -128,6 +129,7 @@ void batch_rebracket_ewald(const ForceField& ff, BatchGeometryT<Space>& geom,
     auto b_kappa  = geom.kappa;
     auto b_mhkl   = geom.max_hkl;
     auto b_mshift = geom.max_shift;
+    const RealType shift_pad = geom.shift_pad;
     const ForceField model = ff;
     const bool has_reciprocal = model.has_reciprocal();
     const bool use_live = live.extent(0) > 0;
@@ -167,7 +169,7 @@ void batch_rebracket_ewald(const ForceField& ff, BatchGeometryT<Space>& geom,
                 for (int i = 0; i < 3; ++i) b_mhkl(b, i) = hkl[i];
             }
 
-            const RealType cutoff = model.real_space_cutoff(kap_opt);
+            const RealType cutoff = model.real_space_cutoff(kap_opt) + shift_pad;
             for (int ax = 0; ax < 3; ++ax) {
                 const int j = (ax + 1) % 3, k = (ax + 2) % 3;
                 RealType cx = cm[1][j]*cm[2][k] - cm[2][j]*cm[1][k];
@@ -242,13 +244,15 @@ void batch_expand_asymmetric_unit(const ModelTablesT<Space>& tables,
                 for (int c = 0; c < 3; ++c)
                     S_frac[r][c] = sym_rot(op, r*3+c);
 
-            // Fractional COM: S_frac @ frac_trans + t_sym. Do not wrap: it breaks exact
-            // symmetry relations between molecules.
+            // Fractional COM: S_frac @ frac_trans + t_sym, wrapped into [0, 1). The
+            // shift box is centred on the home cell and sized for COMs less than a
+            // cell apart.
             RealType ft[3] = {b_trans(b, k, 0), b_trans(b, k, 1), b_trans(b, k, 2)};
             RealType frac_com[3];
             for (int r = 0; r < 3; ++r) {
                 frac_com[r] = S_frac[r][0]*ft[0] + S_frac[r][1]*ft[1] + S_frac[r][2]*ft[2]
                             + sym_trans(op, r);
+                frac_com[r] -= Kokkos::floor(frac_com[r]);
             }
 
             RealType comx = b_cell(b,0,0)*frac_com[0] + b_cell(b,0,1)*frac_com[1] + b_cell(b,0,2)*frac_com[2];

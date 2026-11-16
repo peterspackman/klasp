@@ -286,8 +286,7 @@ bool wrap_angle_axis(RealType* r) {
     return true;
 }
 
-// Wrap fractional translations into [0, 1). Energy and gradient are invariant,
-// but the neighbour shift box is fixed about the home cell.
+// Wrap fractional translations into [0, 1). Energy and gradient are invariant.
 KOKKOS_INLINE_FUNCTION
 void wrap_fractional(RealType* t, int n) {
     for (int i = 0; i < n; ++i) t[i] -= Kokkos::floor(t[i]);

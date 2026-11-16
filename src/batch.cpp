@@ -85,6 +85,9 @@ BatchWorkspaceT<Space> allocate_batch_workspace(int n_batch,
             h_rad(k) = std::sqrt(r2max);
         }
         bws.tables.mol_radius = Kokkos::create_mirror_view_and_copy(SpaceMem(), h_rad);
+        RealType r_max = 0;
+        for (int k = 0; k < n_ind; ++k) r_max = std::max(r_max, h_rad(k));
+        bws.geom.shift_pad = 2 * r_max;
     }
 
     int na = bws.geom.n_atoms;
@@ -138,6 +141,7 @@ void batch_setup_cells(const ModelTablesT<Space>& tables,
     auto volume      = geom.volume;
     auto max_hkl     = geom.max_hkl;
     auto max_shift   = geom.max_shift;
+    const RealType shift_pad = geom.shift_pad;
 
     constexpr RealType PI = RealType(M_PI);
     const RealType deg2rad = PI / RealType(180);
@@ -209,7 +213,7 @@ void batch_setup_cells(const ModelTablesT<Space>& tables,
                 for (int d = 0; d < 3; ++d) max_hkl(b, d) = 0;
             }
 
-            const RealType cutoff = ff.real_space_cutoff(kap);
+            const RealType cutoff = ff.real_space_cutoff(kap) + shift_pad;
 
             // Interplanar spacings for max_shift; lattice vectors are columns.
             RealType ax_ = cm[0][0], ay_ = cm[1][0], az_ = cm[2][0];

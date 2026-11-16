@@ -2,6 +2,7 @@
 // klasp-energy and the Python module share (klasp/ff_structure.hpp).
 
 #include "kokkos_listener.hpp"
+#include "test_support.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
@@ -16,6 +17,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -342,4 +344,57 @@ TEST_CASE("an inverted molecule given outside the cell relaxes like one inside i
     // Against the document's own energy: a relaxed energy and a fresh evaluation
     // agree only to about the Ewald accuracy.
     CHECK_THAT(again.energy, WithinAbs(from_document, 1e-6));
+}
+
+namespace {
+
+// Paracetamol as one molecule and the P2_1/a operators that generate the other
+// three. The copies' fractional centres then spread over more than a cell, as
+// they do in a CSP run.
+json paracetamol_p21a() {
+    json doc = example("paracetamol.json");
+    json& mols = doc["crystal"]["molecules"];
+    mols = json::array({mols[0]});
+    doc["space_group"] = 14;
+    doc["symmetry"] = json::array();
+    for (const char* op : {"x, y, z", "-x+1/2, y+1/2, -z", "-x, -y, -z", "x+1/2, -y+1/2, z"})
+        doc["symmetry"].push_back({{"molecule", 0}, {"op", op}});
+    return doc;
+}
+
+// One structure in a batch slot, with the translations set directly so the
+// loader's own canonicalisation cannot hide where a molecule sits.
+klasp::testing::SingleSlot batch_slot(const json& doc) {
+    auto ws = allocate_workspace(512, 27 * 27 * 27, 50000, 32, 4);
+    MoleculeData mol{};
+    load_structure_json(doc, mol, ws);
+    return klasp::testing::make_single_slot(mol, ws);
+}
+
+std::array<RealType, 3> translation_of(klasp::testing::SingleSlot& s) {
+    auto h = Kokkos::create_mirror(Kokkos::HostSpace(), s.bws.dofs.translations);
+    Kokkos::deep_copy(h, s.bws.dofs.translations);
+    return {h(0, 0, 0), h(0, 0, 1), h(0, 0, 2)};
+}
+
+void set_translation(klasp::testing::SingleSlot& s, const std::array<RealType, 3>& t) {
+    klasp::testing::set_translation(s, 0, t[0], t[1], t[2]);
+}
+
+}  // namespace
+
+TEST_CASE("moving a molecule by a lattice vector leaves the energy unchanged",
+          "[ff-structure][images]") {
+    auto slot = batch_slot(paracetamol_p21a());
+    REQUIRE(slot.n_indep == 1);
+    const auto t0 = translation_of(slot);
+    const RealType e0 = klasp::testing::single_point<4>(slot);
+    for (const auto& n : std::vector<std::array<int, 3>>{
+             {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, 0, -1}, {2, -1, 1}}) {
+        INFO("shift " << n[0] << " " << n[1] << " " << n[2]);
+        auto t = t0;
+        for (int d = 0; d < 3; ++d) t[d] += n[d];
+        set_translation(slot, t);
+        CHECK_THAT(klasp::testing::single_point<4>(slot), WithinAbs(e0, 1e-12));
+    }
 }
