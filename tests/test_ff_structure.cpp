@@ -398,3 +398,78 @@ TEST_CASE("moving a molecule by a lattice vector leaves the energy unchanged",
         CHECK_THAT(klasp::testing::single_point<4>(slot), WithinAbs(e0, 1e-12));
     }
 }
+
+namespace {
+
+// Paracetamol in R-3 given in the hexagonal setting, as CSPy writes it: a = b,
+// gamma = 120 and eighteen operators, the six of -3 under the centring
+// translations (2/3, 1/3, 1/3) and (1/3, 2/3, 2/3).
+json paracetamol_r3_hexagonal() {
+    json doc = example("paracetamol.json");
+    json& mols = doc["crystal"]["molecules"];
+    mols = json::array({mols[0]});
+    mols[0]["translation"] = {0.13, 0.21, 0.07};
+    doc["crystal"]["cell"] = {{"a", 16.0}, {"b", 16.0}, {"c", 30.0},
+                              {"alpha", 90.0}, {"beta", 90.0}, {"gamma", 120.0}};
+    doc["space_group"] = 148;
+    doc["symmetry"] = json::array();
+    for (const char* centring : {"", "2/3+", "1/3+"}) {
+        const std::string t = centring;
+        const std::string u = t == "2/3+" ? "1/3+" : t == "1/3+" ? "2/3+" : "";
+        for (const auto& op : std::vector<std::array<std::string, 3>>{
+                 {"x", "y", "z"}, {"-y", "x-y", "z"}, {"-x+y", "-x", "z"},
+                 {"-x", "-y", "-z"}, {"y", "-x+y", "-z"}, {"x-y", "x", "-z"}})
+            doc["symmetry"].push_back(
+                {{"molecule", 0}, {"op", t + op[0] + "," + u + op[1] + "," + u + op[2]}});
+    }
+    return doc;
+}
+
+void check_hexagonal(const std::array<double, 6>& cell) {
+    CHECK_THAT(cell[0], WithinAbs(cell[1], 1e-6));
+    CHECK_THAT(cell[3], WithinAbs(90.0, 1e-6));
+    CHECK_THAT(cell[4], WithinAbs(90.0, 1e-6));
+    CHECK_THAT(cell[5], WithinAbs(120.0, 1e-6));
+}
+
+}  // namespace
+
+// The rhombohedral strain basis would tilt a hexagonal-setting cell out of the
+// lattice its operators describe, and the relaxation would stall.
+TEST_CASE("an R-centred group in the hexagonal setting relaxes as a hexagonal cell",
+          "[ff-structure][trigonal]") {
+    FFRelaxOptions o;
+    o.iterations = 300;
+    const FFStructure s = ff_relax(paracetamol_r3_hexagonal(), o).front();
+    CHECK(s.converged);
+    check_hexagonal(s.cell_params);
+}
+
+TEST_CASE("a batch in the hexagonal setting of an R-centred group relaxes",
+          "[ff-structure][trigonal][energy]") {
+    json doc = paracetamol_r3_hexagonal();
+    doc["structures"] = json::array(
+        {json{{"name", "r3"}, {"cell", doc["crystal"]["cell"]},
+              {"molecules", doc["crystal"]["molecules"]}}});
+    const auto dir = std::filesystem::temp_directory_path() / "klasp_test_r3_hexagonal";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const auto path = dir / "batch.json";
+    {
+        std::ofstream f(path);
+        f << doc.dump();
+    }
+    EnergyOptions o;
+    o.relax = true;
+    o.iterations = 300;
+    o.output_dir = (dir / "relaxed").string();
+    o.summary = (dir / "summary.json").string();
+    cmd_energy({path.string()}, o);
+    const json summary = read_json(o.summary);
+    CHECK(summary.at("structures").at(0).at("converged").get<bool>());
+    const json cell = read_json(dir / "relaxed" / "r3.json").at("crystal").at("cell");
+    check_hexagonal({cell["a"].get<double>(), cell["b"].get<double>(), cell["c"].get<double>(),
+                     cell["alpha"].get<double>(), cell["beta"].get<double>(),
+                     cell["gamma"].get<double>()});
+    std::filesystem::remove_all(dir);
+}

@@ -63,9 +63,9 @@ int cmd_fdcheck(const FdcheckOptions& o) {
         bws.dofs.strain = decltype(bws.dofs.strain)("strain", n_batch, 6);
         bws.dofs.d_g_strain = decltype(bws.dofs.d_g_strain)("d_g_strain", n_batch, 6);
     }
-    int sg_num = config.space_group > 0 ? config.space_group : 1;
-    auto& sg_cell = get_space_group(sg_num);
-    batch_set_strain_dofs(bws.geom, bws.dofs, static_cast<int>(sg_cell.lattice));
+    batch_set_strain_dofs(bws.geom, bws.dofs,
+                          lattice_for_cell(config.space_group, mol.cell_params[3],
+                                           mol.cell_params[4], mol.cell_params[5]));
     Kokkos::deep_copy(bws.dofs.cell_ref, bws.geom.cell);
     Kokkos::deep_copy(bws.dofs.strain, RealType(0));
     Kokkos::deep_copy(bws.dofs.d_g_strain, RealType(0));

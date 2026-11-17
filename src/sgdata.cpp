@@ -80,4 +80,14 @@ const SpaceGroupInfo& get_space_group(int sg_num) {
     return info;
 }
 
+LatticeType lattice_for_cell(int sg_num, double alpha, double beta, double gamma) {
+    if (sg_num < 1 || sg_num > 230) return TRICLINIC;
+    const LatticeType lattice = get_space_group(sg_num).lattice;
+    constexpr double tol = 1e-3;   // degrees
+    const bool hexagonal_setting = std::abs(alpha - 90.0) < tol &&
+                                   std::abs(beta - 90.0) < tol &&
+                                   std::abs(gamma - 120.0) < tol;
+    return lattice == RHOMBOHEDRAL && hexagonal_setting ? HEXAGONAL : lattice;
+}
+
 }  // namespace klasp

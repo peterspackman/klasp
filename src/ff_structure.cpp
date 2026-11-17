@@ -279,9 +279,8 @@ std::vector<FFStructure> ff_relax(const json& doc_in, const FFRelaxOptions& o) {
     set_starts(bws, l, n_batch);
 
     if (!o.fixed_cell) {
-        int lattice = TRICLINIC;
-        if (l.config.space_group > 0)
-            lattice = static_cast<int>(get_space_group(l.config.space_group).lattice);
+        const int lattice = lattice_for_cell(l.config.space_group, l.mol.cell_params[3],
+                                             l.mol.cell_params[4], l.mol.cell_params[5]);
         bws.dofs.d_g_strain = SView2D<RealType, ExecSpace>("d_g_strain", n_batch, 6);
         bws.dofs.strain     = SView2D<RealType, ExecSpace>("strain", n_batch, 6);
         bws.dofs.cell_ref   = SView3D<RealType, ExecSpace>("cell_ref", n_batch, 3, 3);

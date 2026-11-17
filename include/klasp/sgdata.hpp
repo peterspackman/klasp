@@ -32,6 +32,12 @@ struct SpaceGroupInfo {
 // consulted; keep gemmi out of this header, which device code includes.
 const SpaceGroupInfo& get_space_group(int sg_num);
 
+// The lattice type a given cell of this space group keeps under strain. An
+// R-centred group handed over in its hexagonal setting (alpha = beta = 90,
+// gamma = 120, which no rhombohedral cell can have) is HEXAGONAL, not the
+// RHOMBOHEDRAL of get_space_group. TRICLINIC when sg_num is not a group.
+LatticeType lattice_for_cell(int sg_num, double alpha, double beta, double gamma);
+
 // Access symop rotation and translation by index.
 inline void get_symop(const SpaceGroupInfo& sg, int idx,
                       double rot[3][3], double trans[3]) {
