@@ -238,7 +238,7 @@ if(KLASP_ENABLE_PET)
     CPMAddPackage(
         NAME pet_kokkos
         GITHUB_REPOSITORY peterspackman/pet-kokkos
-        GIT_TAG a7781b216e67b9ca15e96f38afee647a1d09ba72
+        GIT_TAG 8a86b35ebde13171a4d7304773c04fe56d114e87
         OPTIONS "PET_ARCH_NATIVE ${KLASP_ARCH_NATIVE}"
     )
 endif()
