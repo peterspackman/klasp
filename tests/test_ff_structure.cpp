@@ -473,3 +473,177 @@ TEST_CASE("a batch in the hexagonal setting of an R-centred group relaxes",
                      cell["gamma"].get<double>()});
     std::filesystem::remove_all(dir);
 }
+
+namespace {
+
+using Mat3 = std::array<std::array<double, 3>, 3>;
+
+Mat3 mul(const Mat3& A, const Mat3& B) {
+    Mat3 C{};
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            for (int k = 0; k < 3; ++k) C[i][j] += A[i][k] * B[k][j];
+    return C;
+}
+
+Mat3 inverse(const Mat3& M) {
+    double m[3][3], out[3][3];
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) m[i][j] = M[i][j];
+    REQUIRE(mat3_inv(m, out));
+    Mat3 R;
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) R[i][j] = out[i][j];
+    return R;
+}
+
+Mat3 cell_matrix(const json& cell) {
+    RealType p[6] = {cell["a"].get<double>(), cell["b"].get<double>(), cell["c"].get<double>(),
+                     cell["alpha"].get<double>(), cell["beta"].get<double>(),
+                     cell["gamma"].get<double>()};
+    RealType m[3][3];
+    cell_params_to_matrix(p, m);
+    Mat3 C;
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) C[i][j] = m[i][j];
+    return C;
+}
+
+// The same crystal on new axes: column j of P is new axis j in the old
+// fractional coordinates. Molecule centres move to P^-1 t and orientations
+// follow the new Cartesian frame (new a along x); `ops` are the operations on
+// the new axes.
+json change_axes(const json& doc_in, const Mat3& P, const std::vector<std::string>& ops) {
+    json doc = doc_in;
+    const Mat3 C_old = cell_matrix(doc["crystal"]["cell"]);
+    const Mat3 axes = mul(C_old, P);
+    auto len = [&](int j) {
+        return std::sqrt(axes[0][j]*axes[0][j] + axes[1][j]*axes[1][j] + axes[2][j]*axes[2][j]);
+    };
+    auto ang = [&](int i, int j) {
+        double d = 0;
+        for (int r = 0; r < 3; ++r) d += axes[r][i] * axes[r][j];
+        return std::acos(d / (len(i) * len(j))) * 180.0 / M_PI;
+    };
+    json cell = {{"a", len(0)}, {"b", len(1)}, {"c", len(2)},
+                 {"alpha", ang(1, 2)}, {"beta", ang(0, 2)}, {"gamma", ang(0, 1)}};
+    const Mat3 Q = mul(cell_matrix(cell), inverse(axes));
+    const Mat3 Pinv = inverse(P);
+    doc["crystal"]["cell"] = cell;
+    for (json& m : doc["crystal"]["molecules"]) {
+        const auto t = m["translation"].get<std::vector<double>>();
+        std::vector<double> t_new(3, 0.0);
+        for (int i = 0; i < 3; ++i)
+            for (int k = 0; k < 3; ++k) t_new[i] += Pinv[i][k] * t[k];
+        m["translation"] = t_new;
+        Mat3 R{{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}};
+        if (m.contains("rotation"))
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 3; ++j) R[i][j] = m["rotation"][i][j].get<double>();
+        const Mat3 R_new = mul(Q, R);
+        m["rotation"] = R_new;
+    }
+    doc["symmetry"] = json::array();
+    for (const auto& op : ops) doc["symmetry"].push_back({{"molecule", 0}, {"op", op}});
+    return doc;
+}
+
+void check_rhombohedral(const std::array<double, 6>& cell) {
+    CHECK_THAT(cell[0], WithinAbs(cell[1], 1e-6));
+    CHECK_THAT(cell[1], WithinAbs(cell[2], 1e-6));
+    CHECK_THAT(cell[3], WithinAbs(cell[4], 1e-6));
+    CHECK_THAT(cell[4], WithinAbs(cell[5], 1e-6));
+}
+
+// R-3 on rhombohedral (obverse) axes: a_R = (2a+b+c)/3, b_R = (-a+b+c)/3,
+// c_R = (-a-2b+c)/3, with the 3-fold permuting them.
+json paracetamol_r3_rhombohedral() {
+    const Mat3 P{{{2.0/3, -1.0/3, -1.0/3}, {1.0/3, 1.0/3, -2.0/3}, {1.0/3, 1.0/3, 1.0/3}}};
+    return change_axes(paracetamol_r3_hexagonal(), P,
+                       {"x,y,z", "z,x,y", "y,z,x", "-x,-y,-z", "-z,-x,-y", "-y,-z,-x"});
+}
+
+// P2_1/a with the unique axis moved from b to c: new (a, b, c) = old (c, a, b).
+json paracetamol_p21_unique_c() {
+    const Mat3 P{{{0, 1, 0}, {0, 0, 1}, {1, 0, 0}}};
+    return change_axes(paracetamol_p21a(), P,
+                       {"x,y,z", "-x,-y+1/2,z+1/2", "-x,-y,-z", "x,y+1/2,-z+1/2"});
+}
+
+}  // namespace
+
+// The operations, not a space-group number, set the cell's freedom, so one
+// crystal relaxes the same way on either set of axes.
+TEST_CASE("R-3 relaxes to the same structure on rhombohedral and hexagonal axes",
+          "[ff-structure][trigonal]") {
+    const json hex = paracetamol_r3_hexagonal();
+    const json rh = paracetamol_r3_rhombohedral();
+    // The Ewald sums run over different cells, so the two agree only to the
+    // Ewald accuracy (1e-4 kJ/mol at the default); tightened to compare minima.
+    FFRelaxOptions o;
+    o.iterations = 300;
+    o.model.ewald_accuracy = 1e-10;
+    REQUIRE_THAT(ff_evaluate(rh, o.model).energy,
+                 WithinAbs(ff_evaluate(hex, o.model).energy, 1e-6));
+
+    const FFStructure s_hex = ff_relax(hex, o).front();
+    const FFStructure s_rh = ff_relax(rh, o).front();
+    std::printf("  R-3: hexagonal axes %.10f, rhombohedral axes %.10f kJ/mol, diff %.2e\n",
+                s_hex.energy, s_rh.energy, s_rh.energy - s_hex.energy);
+    CHECK(s_hex.converged);
+    CHECK(s_rh.converged);
+    check_hexagonal(s_hex.cell_params);
+    check_rhombohedral(s_rh.cell_params);
+    CHECK_THAT(s_rh.energy, WithinAbs(s_hex.energy, 1e-6));
+}
+
+TEST_CASE("P2_1/c relaxes the same with unique axis b or c", "[ff-structure][monoclinic]") {
+    const json b_unique = paracetamol_p21a();
+    const json c_unique = paracetamol_p21_unique_c();
+    REQUIRE_THAT(ff_evaluate(c_unique).energy, WithinAbs(ff_evaluate(b_unique).energy, 1e-8));
+
+    FFRelaxOptions o;
+    o.iterations = 300;
+    const FFStructure s_b = ff_relax(b_unique, o).front();
+    const FFStructure s_c = ff_relax(c_unique, o).front();
+    std::printf("  P2_1/c: unique b %.10f, unique c %.10f kJ/mol, diff %.2e\n",
+                s_b.energy, s_c.energy, s_c.energy - s_b.energy);
+    CHECK(s_b.converged);
+    CHECK(s_c.converged);
+    CHECK_THAT(s_b.cell_params[3], WithinAbs(90.0, 1e-6));
+    CHECK_THAT(s_b.cell_params[5], WithinAbs(90.0, 1e-6));
+    CHECK_THAT(s_c.cell_params[3], WithinAbs(90.0, 1e-6));
+    CHECK_THAT(s_c.cell_params[4], WithinAbs(90.0, 1e-6));
+    CHECK_THAT(s_c.energy, WithinAbs(s_b.energy, 1e-6));
+}
+
+TEST_CASE("an R-centred group in the hexagonal setting needs no space_group to keep its cell",
+          "[ff-structure][trigonal]") {
+    json doc = paracetamol_r3_hexagonal();
+    doc.erase("space_group");
+    FFRelaxOptions o;
+    o.iterations = 300;
+    const FFStructure s = ff_relax(doc, o).front();
+    CHECK(s.converged);
+    check_hexagonal(s.cell_params);
+}
+
+TEST_CASE("a space_group that contradicts the operations is warned about",
+          "[ff-structure][trigonal]") {
+    json doc = paracetamol_r3_hexagonal();
+    doc["space_group"] = 14;
+    FFRelaxOptions o;
+    o.iterations = 1;
+    logging::Capture capture(logging::Level::Warn);
+    ff_relax(doc, o);
+    CHECK_THAT(capture.text(), ContainsSubstring("space_group 14"));
+}
+
+TEST_CASE("relaxing R-3 on rhombohedral axes is deterministic", "[ff-structure][trigonal]") {
+    FFRelaxOptions o;
+    o.iterations = 300;
+    const FFStructure a = ff_relax(paracetamol_r3_rhombohedral(), o).front();
+    const FFStructure b = ff_relax(paracetamol_r3_rhombohedral(), o).front();
+    CHECK(a.energy == b.energy);
+    for (int i = 0; i < 6; ++i) CHECK(a.cell_params[i] == b.cell_params[i]);
+}

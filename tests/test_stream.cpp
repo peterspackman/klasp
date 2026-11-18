@@ -51,12 +51,12 @@ TEST_CASE("streaming and lockstep reach the same minimum", "[stream]") {
     // Same start, same tolerance, same step: the only difference is that
     // streaming stops iterating a slot once it is done.
     auto lock = make_fixture(6.0, 6.8, 7.4, 88.0, 95.0, 103.0);
-    batch_set_strain_dofs(lock.bws.geom, lock.bws.dofs, static_cast<int>(TRICLINIC));
+    batch_set_strain_dofs(lock.bws.tables, lock.bws.geom, lock.bws.dofs);
     const auto rl = batch_optimize_asymunit<1>(lock.bws, stream_settings(120));
     const double E_lock = rl.final_energies(0);
 
     auto strm = make_fixture(6.0, 6.8, 7.4, 88.0, 95.0, 103.0);
-    batch_set_strain_dofs(strm.bws.geom, strm.bws.dofs, static_cast<int>(TRICLINIC));
+    batch_set_strain_dofs(strm.bws.tables, strm.bws.geom, strm.bws.dofs);
     StreamPool pool = pool_of(strm, 1);
     const auto rs = batch_optimize_stream_tr<1>(strm.bws, pool, stream_settings(120));
 
@@ -73,7 +73,7 @@ TEST_CASE("a slot refilled with no warm Hessian still converges", "[stream]") {
     // No Hessian in the pool (stage 1's situation). Three entries through one
     // slot means entries 2 and 3 arrive by refill.
     auto f = make_fixture(6.0, 6.8, 7.4, 88.0, 95.0, 103.0);
-    batch_set_strain_dofs(f.bws.geom, f.bws.dofs, static_cast<int>(TRICLINIC));
+    batch_set_strain_dofs(f.bws.tables, f.bws.geom, f.bws.dofs);
     StreamPool pool = pool_of(f, 3);
 
     const auto r = batch_optimize_stream_tr<1>(f.bws, pool, stream_settings(120));
@@ -94,7 +94,7 @@ TEST_CASE("a slot refilled with no warm Hessian still converges", "[stream]") {
 TEST_CASE("stage 1 hands the relaxed structure to stage 2, not the starting one",
           "[stream]") {
     auto f = make_fixture(6.0, 6.8, 7.4, 88.0, 95.0, 103.0);
-    batch_set_strain_dofs(f.bws.geom, f.bws.dofs, static_cast<int>(TRICLINIC));
+    batch_set_strain_dofs(f.bws.tables, f.bws.geom, f.bws.dofs);
     StreamPool raw = pool_of(f, 2);
     StreamPool out = allocate_stream_pool(2, f.bws.tables.n_indep);
 
@@ -161,7 +161,7 @@ TEST_CASE("the Hessian handed to stage 2 survives post-convergence iterations",
     // burns the whole budget.
     auto probe = [](int iters, double grad_tol) {
         auto f = make_fixture(6.0, 6.8, 7.4, 88.0, 95.0, 103.0);
-        batch_set_strain_dofs(f.bws.geom, f.bws.dofs, static_cast<int>(TRICLINIC));
+        batch_set_strain_dofs(f.bws.tables, f.bws.geom, f.bws.dofs);
         auto s = stream_settings(iters);
         s.reuse_hessian = false;
         s.grad_tol = grad_tol;

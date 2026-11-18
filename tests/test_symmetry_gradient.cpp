@@ -473,14 +473,15 @@ TEST_CASE("multipole representation is orthogonal in the multiplicity metric",
 namespace {
 
 // Central difference of dE/dq_s against the analytic B dE/deps, for every cell
-// DOF the given lattice allows.
+// DOF the fixture's operations allow; there must be expected_ncd of them.
 template <int RANK>
-double worst_cell_dof_mismatch(Fixture& f, int lattice, double h, bool verbose = true) {
+double worst_cell_dof_mismatch(Fixture& f, int expected_ncd, double h, bool verbose = true) {
     f.bws.dofs.cell_ref   = decltype(f.bws.dofs.cell_ref)("cell_ref", 1, 3, 3);
     f.bws.dofs.strain     = decltype(f.bws.dofs.strain)("strain", 1, 6);
     f.bws.dofs.d_g_strain = decltype(f.bws.dofs.d_g_strain)("d_g_strain", 1, 6);
-    const int ncd = batch_set_strain_dofs(f.bws.geom, f.bws.dofs, lattice, /*fix_angles=*/false);
     Kokkos::deep_copy(f.bws.dofs.cell_ref, f.bws.geom.cell);
+    const int ncd = batch_set_strain_dofs(f.bws.tables, f.bws.geom, f.bws.dofs);
+    REQUIRE(ncd == expected_ncd);
     Kokkos::deep_copy(f.bws.dofs.strain, RealType(0));
     Kokkos::deep_copy(f.bws.dofs.d_g_strain, RealType(0));
 
@@ -543,20 +544,48 @@ const std::vector<std::array<int, 9>> RHOMB_R3 = {
 TEST_CASE("cell-DOF gradient matches FD, triclinic basis", "[gradients][strain]") {
     auto f = make_sym_fixture(7.0, 8.2, 9.5, 88, 97, 103, PBAR1);
     std::printf("  triclinic basis (6 DOF), rank 4:\n");
-    REQUIRE(worst_cell_dof_mismatch<4>(f, static_cast<int>(TRICLINIC), 1e-6) < 1e-5);
+    REQUIRE(worst_cell_dof_mismatch<4>(f, 6, 1e-6) < 1e-5);
 }
 
 TEST_CASE("cell-DOF gradient matches FD, hexagonal basis", "[gradients][strain]") {
     auto f = make_sym_fixture(7.0, 7.0, 9.5, 90, 90, 120, THREEFOLD);
     std::printf("  hexagonal basis (2 DOF), rank 4:\n");
-    REQUIRE(worst_cell_dof_mismatch<4>(f, static_cast<int>(HEXAGONAL), 1e-6) < 1e-5);
+    REQUIRE(worst_cell_dof_mismatch<4>(f, 2, 1e-6) < 1e-5);
+}
+
+// Monoclinic with unique axis c: the free shear is xy, not the xz of unique b.
+TEST_CASE("cell-DOF gradient matches FD, monoclinic unique axis c", "[gradients][strain]") {
+    const std::vector<std::array<int, 9>> twofold_c = {
+        {1, 0, 0,  0, 1, 0,  0, 0, 1},
+        {-1, 0, 0,  0,-1, 0,  0, 0, 1},
+    };
+    auto f = make_sym_fixture(7.0, 8.2, 9.5, 90, 90, 103, twofold_c);
+    std::printf("  monoclinic unique c (4 DOF), rank 4:\n");
+    REQUIRE(worst_cell_dof_mismatch<4>(f, 4, 1e-6) < 1e-5);
+    const auto hb = testing::host_snapshot(f.bws.dofs.cell_dof_basis);
+    CHECK(hb(0, 3, 5) == RealType(1));
+}
+
+// R-3 on hexagonal axes: the six rotations of -3 about c.
+TEST_CASE("cell-DOF gradient matches FD, R-3 in the hexagonal setting", "[gradients][strain]") {
+    const std::vector<std::array<int, 9>> rbar3_hex = {
+        {1, 0, 0,  0, 1, 0,  0, 0, 1},
+        {0,-1, 0,  1,-1, 0,  0, 0, 1},
+        {-1, 1, 0, -1, 0, 0,  0, 0, 1},
+        {-1, 0, 0,  0,-1, 0,  0, 0,-1},
+        {0, 1, 0, -1, 1, 0,  0, 0,-1},
+        {1,-1, 0,  1, 0, 0,  0, 0,-1},
+    };
+    auto f = make_sym_fixture(7.0, 7.0, 9.5, 90, 90, 120, rbar3_hex);
+    std::printf("  R-3 hexagonal setting (2 DOF), rank 4:\n");
+    REQUIRE(worst_cell_dof_mismatch<4>(f, 2, 1e-6) < 1e-5);
 }
 
 // Space group 148.
 TEST_CASE("cell-DOF gradient matches FD, rhombohedral basis", "[gradients][strain]") {
     auto f = make_sym_fixture(8.0, 8.0, 8.0, 72, 72, 72, RHOMB_R3);
     std::printf("  rhombohedral basis (2 DOF), rank 4:\n");
-    REQUIRE(worst_cell_dof_mismatch<4>(f, static_cast<int>(RHOMBOHEDRAL), 1e-6) < 1e-5);
+    REQUIRE(worst_cell_dof_mismatch<4>(f, 2, 1e-6) < 1e-5);
 }
 
 // ---------------------------------------------------------------------------
@@ -566,13 +595,14 @@ TEST_CASE("cell-DOF gradient matches FD, rhombohedral basis", "[gradients][strai
 namespace {
 
 template <int RANK>
-double worst_cell_dof_mismatch_at(Fixture& f, int lattice, const double* q0_in,
+double worst_cell_dof_mismatch_at(Fixture& f, int expected_ncd, const double* q0_in,
                                   double h, bool reanchor, bool verbose = true) {
     f.bws.dofs.cell_ref   = decltype(f.bws.dofs.cell_ref)("cell_ref", 1, 3, 3);
     f.bws.dofs.strain     = decltype(f.bws.dofs.strain)("strain", 1, 6);
     f.bws.dofs.d_g_strain = decltype(f.bws.dofs.d_g_strain)("d_g_strain", 1, 6);
-    const int ncd = batch_set_strain_dofs(f.bws.geom, f.bws.dofs, lattice, /*fix_angles=*/false);
     Kokkos::deep_copy(f.bws.dofs.cell_ref, f.bws.geom.cell);
+    const int ncd = batch_set_strain_dofs(f.bws.tables, f.bws.geom, f.bws.dofs);
+    REQUIRE(ncd == expected_ncd);
     Kokkos::deep_copy(f.bws.dofs.strain, RealType(0));
     Kokkos::deep_copy(f.bws.dofs.d_g_strain, RealType(0));
 
@@ -641,7 +671,7 @@ TEST_CASE("cell-DOF gradient matches FD at nonzero strain, rhombohedral",
     auto f = make_sym_fixture(8.0, 8.0, 8.0, 72, 72, 72, RHOMB_R3);
     const double q0[6] = {0.035, -0.022, 0, 0, 0, 0};
     std::printf("  rhombohedral, deformed cell, rank 4:\n");
-    REQUIRE(worst_cell_dof_mismatch_at<4>(f, static_cast<int>(RHOMBOHEDRAL), q0,
+    REQUIRE(worst_cell_dof_mismatch_at<4>(f, 2, q0,
                                           1e-6, /*reanchor=*/false) < 1e-5);
 }
 
@@ -650,7 +680,7 @@ TEST_CASE("cell-DOF gradient matches FD after a re-anchor, rhombohedral",
     auto f = make_sym_fixture(8.0, 8.0, 8.0, 72, 72, 72, RHOMB_R3);
     const double q0[6] = {0.035, -0.022, 0, 0, 0, 0};
     std::printf("  rhombohedral, re-anchored reference, rank 4:\n");
-    REQUIRE(worst_cell_dof_mismatch_at<4>(f, static_cast<int>(RHOMBOHEDRAL), q0,
+    REQUIRE(worst_cell_dof_mismatch_at<4>(f, 2, q0,
                                           1e-6, /*reanchor=*/true) < 1e-5);
 }
 
@@ -661,7 +691,7 @@ TEST_CASE("cell-DOF gradient matches FD at nonzero strain, hexagonal",
     auto f = make_sym_fixture(7.0, 7.0, 9.5, 90, 90, 120, THREEFOLD);
     const double q0[6] = {0.035, -0.022, 0, 0, 0, 0};
     std::printf("  hexagonal, deformed cell, rank 4:\n");
-    REQUIRE(worst_cell_dof_mismatch_at<4>(f, static_cast<int>(HEXAGONAL), q0,
+    REQUIRE(worst_cell_dof_mismatch_at<4>(f, 2, q0,
                                           1e-6, /*reanchor=*/false) < 1e-5);
 }
 
@@ -721,13 +751,25 @@ double rhombohedral_decay(const RealType cell[9], const RealType* basis, int ndo
 
 }  // namespace
 
+namespace {
+
+PointGroup point_group_of_list(const std::vector<std::array<int, 9>>& ops) {
+    std::vector<RealType> w;
+    for (const auto& op : ops)
+        for (int v : op) w.push_back(static_cast<RealType>(v));
+    return point_group_of(w.data(), static_cast<int>(ops.size()));
+}
+
+}  // namespace
+
 TEST_CASE("a rhombohedral strain basis is specific to the cell it was built from",
           "[strain][symmetry]") {
+    const PointGroup pg = point_group_of_list(RHOMB_R3);
     RealType cellA[9], cellB[9], basisA[36], basisB[36];
     rhombohedral_cell(8.0, 72.0, cellA);
     rhombohedral_cell(8.0, 96.0, cellB);          // a differently-oriented 3-fold
-    const int nA = build_strain_basis(static_cast<int>(RHOMBOHEDRAL), cellA, basisA, 2);
-    const int nB = build_strain_basis(static_cast<int>(RHOMBOHEDRAL), cellB, basisB, 2);
+    const int nA = symmetric_strain_basis(pg, cellA, false, basisA);
+    const int nB = symmetric_strain_basis(pg, cellB, false, basisB);
     REQUIRE(nA == 2);
     REQUIRE(nB == 2);
 
@@ -740,17 +782,40 @@ TEST_CASE("a rhombohedral strain basis is specific to the cell it was built from
     CHECK(rhombohedral_decay(cellB, basisA, nA) > 1e-3);
 }
 
-// The constant-basis lattices do not depend on the cell.
-TEST_CASE("non-rhombohedral strain bases do not depend on the cell",
+// When every symmetry axis is a Cartesian axis the rows do not depend on the
+// cell's shape.
+TEST_CASE("a strain basis with axes along x, y, z does not depend on the cell",
           "[strain][symmetry]") {
-    RealType cellA[9], cellB[9], bA[36], bB[36];
-    rhombohedral_cell(8.0, 72.0, cellA);
-    rhombohedral_cell(9.5, 96.0, cellB);
-    for (int lt : {static_cast<int>(TRICLINIC), static_cast<int>(MONOCLINIC),
-                   static_cast<int>(ORTHORHOMBIC), static_cast<int>(TETRAGONAL),
-                   static_cast<int>(HEXAGONAL), static_cast<int>(CUBIC)}) {
-        const int nA = build_strain_basis(lt, cellA, bA, 6);
-        const int nB = build_strain_basis(lt, cellB, bB, 6);
+    struct Case { int sg; double pa[6], pb[6]; };
+    const Case cases[] = {
+        {2,   {7, 8, 9, 88, 97, 103},  {9.5, 6, 11, 70, 110, 95}},
+        {14,  {7, 8, 9, 90, 97, 90},   {9.5, 6, 11, 90, 120, 90}},
+        {61,  {7, 8, 9, 90, 90, 90},   {9.5, 6, 11, 90, 90, 90}},
+        {88,  {7, 7, 9, 90, 90, 90},   {9.5, 9.5, 6, 90, 90, 90}},
+        {176, {7, 7, 9, 90, 90, 120},  {9.5, 9.5, 6, 90, 90, 120}},
+        {205, {7, 7, 7, 90, 90, 90},   {9.5, 9.5, 9.5, 90, 90, 90}},
+    };
+    auto to_cell = [](const double p[6], RealType out[9]) {
+        RealType pr[6], m[3][3];
+        for (int i = 0; i < 6; ++i) pr[i] = RealType(p[i]);
+        cell_params_to_matrix(pr, m);
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) out[i*3 + j] = m[i][j];
+    };
+    for (const auto& c : cases) {
+        CAPTURE(c.sg);
+        const auto& sg = get_space_group(c.sg);
+        std::vector<RealType> w;
+        for (int k = 0; k < sg.n_symops; ++k)
+            for (int r = 0; r < 3; ++r)
+                for (int col = 0; col < 3; ++col) w.push_back(RealType(sg.symops[k].rot[r][col]));
+        const PointGroup pg = point_group_of(w.data(), sg.n_symops);
+        RealType cellA[9], cellB[9], bA[36], bB[36];
+        to_cell(c.pa, cellA);
+        to_cell(c.pb, cellB);
+        const int nA = symmetric_strain_basis(pg, cellA, false, bA);
+        const int nB = symmetric_strain_basis(pg, cellB, false, bB);
+        REQUIRE(nA == pg.strain_dim);
         REQUIRE(nA == nB);
         for (int i = 0; i < 36; ++i) REQUIRE(bA[i] == bB[i]);
     }

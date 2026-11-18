@@ -1,13 +1,16 @@
 #pragma once
 
 #include <cmath>
+#include <string>
+#include <vector>
 
 namespace klasp {
 
 // The seven lattice types. Not gemmi's CrystalSystem: trigonal groups fold into
 // HEXAGONAL, and RHOMBOHEDRAL names the rhombohedral setting of an R-centred
-// group, whose strain basis depends on the cell (see build_strain_basis).
-// The numeric values cross the device boundary as plain ints.
+// group. Used for generation, volumes and labels; the cell's strain freedom
+// comes from the operations (klasp/strain_basis.hpp). The numeric values cross
+// the device boundary as plain ints.
 enum LatticeType {
     TRICLINIC = 0, MONOCLINIC = 1, ORTHORHOMBIC = 2,
     TETRAGONAL = 3, RHOMBOHEDRAL = 4, HEXAGONAL = 5, CUBIC = 6
@@ -32,11 +35,14 @@ struct SpaceGroupInfo {
 // consulted; keep gemmi out of this header, which device code includes.
 const SpaceGroupInfo& get_space_group(int sg_num);
 
-// The lattice type a given cell of this space group keeps under strain. An
-// R-centred group handed over in its hexagonal setting (alpha = beta = 90,
-// gamma = 120, which no rhombohedral cell can have) is HEXAGONAL, not the
-// RHOMBOHEDRAL of get_space_group. TRICLINIC when sg_num is not a group.
-LatticeType lattice_for_cell(int sg_num, double alpha, double beta, double gamma);
+// Every setting in gemmi's table (559 of them: origin choices, cell choices,
+// unique axes, hexagonal and rhombohedral axes), with all its operations.
+struct SpaceGroupSetting {
+    int number;
+    std::string name;
+    std::vector<SymopData> ops;
+};
+std::vector<SpaceGroupSetting> all_space_group_settings();
 
 // Access symop rotation and translation by index.
 inline void get_symop(const SpaceGroupInfo& sg, int idx,

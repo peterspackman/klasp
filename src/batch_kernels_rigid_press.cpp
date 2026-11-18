@@ -78,15 +78,13 @@ void batch_energy_gradient_rigid_press(const ModelTablesT<Space>& tables,
 // -----------------------------------------------------------------------
 template <typename Space>
 BatchOptimizeResult batch_optimize_rigid_press(BatchWorkspaceT<Space>& bws,
-                                               const BatchOptimizeSettings& settings,
-                                               int lattice_type) {
-    LatticeType lattice = static_cast<LatticeType>(lattice_type);
+                                               const BatchOptimizeSettings& settings) {
     const ForceField rp_model = pair_only_force_field(RP_MAX_CUTOFF);
     const int n_batch = bws.geom.n_batch;
     const int n_indep = bws.tables.n_indep;
 
-    batch_set_strain_dofs(bws.geom, bws.dofs, static_cast<int>(lattice));
     Kokkos::deep_copy(bws.dofs.cell_ref, bws.geom.cell);
+    batch_set_strain_dofs(bws.tables, bws.geom, bws.dofs);
     Kokkos::deep_copy(bws.dofs.strain, RealType(0));
     Kokkos::deep_copy(bws.dofs.d_g_strain, RealType(0));
 
@@ -122,7 +120,6 @@ template void batch_energy_gradient_rigid_press<ExecSpace>(
     const ModelTables&, BatchGeometry&, RigidDofState&, BatchLBFGSState&,
                                                             const BatchOptimizeSettings&, int);
 template BatchOptimizeResult batch_optimize_rigid_press<ExecSpace>(BatchWorkspace&,
-                                                                    const BatchOptimizeSettings&,
-                                                                    int);
+                                                                    const BatchOptimizeSettings&);
 
 }  // namespace klasp

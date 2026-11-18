@@ -155,8 +155,8 @@ TEST_CASE("the tabulated and closed-form models relax to the same structure",
     // P2_1/c, so the asymmetric-unit prefactor is 2.
     auto fb = make_fixture_p21c(6.2, 7.1, 8.3, 96.0);
     auto ft = make_fixture_p21c(6.2, 7.1, 8.3, 96.0);
-    batch_set_strain_dofs(fb.bws.geom, fb.bws.dofs, static_cast<int>(MONOCLINIC));
-    batch_set_strain_dofs(ft.bws.geom, ft.bws.dofs, static_cast<int>(MONOCLINIC));
+    batch_set_strain_dofs(fb.bws.tables, fb.bws.geom, fb.bws.dofs);
+    batch_set_strain_dofs(ft.bws.tables, ft.bws.geom, ft.bws.dofs);
     auto tabs = install_tables(ft, relax_settings(1).model.buck_damping);
 
     const Landing buck = relax(fb, PairModelKind::Buckingham, 200);

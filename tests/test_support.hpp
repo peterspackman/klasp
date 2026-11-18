@@ -40,6 +40,97 @@ inline bool fd_agrees(double analytic, double fd,
 }
 
 
+// ---------------------------------------------------------------------------
+// The strain basis as it was built from a LatticeType, before it was derived
+// from the operations: the reference build_symmetric_strain_basis must
+// reproduce row for row in standard settings.
+// ---------------------------------------------------------------------------
+
+// Rows the lattice allows with fix_angles (lengths only), else 6.
+inline int lattice_max_dof(LatticeType lt, bool fix_angles) {
+    if (!fix_angles) return 6;
+    switch (lt) {
+        case CUBIC: case RHOMBOHEDRAL:   return 1;
+        case TETRAGONAL: case HEXAGONAL: return 2;
+        default:                         return 3;
+    }
+}
+
+// `cell` is 3x3 row-major, lattice vectors as columns; only rhombohedral reads it.
+inline int lattice_strain_basis(LatticeType lattice, const RealType* cell, RealType* basis,
+                                int max_dof) {
+    for (int i = 0; i < 36; ++i) basis[i] = 0;
+    if (max_dof <= 0) return 0;
+    auto row = [&](int r) { return basis + r * 6; };
+    const RealType r2 = RealType(1) / Kokkos::sqrt(RealType(2));
+    const RealType r3 = RealType(1) / Kokkos::sqrt(RealType(3));
+    auto capped = [&](int n) { return n < max_dof ? n : max_dof; };
+
+    if (lattice == CUBIC) {
+        row(0)[0] = row(0)[1] = row(0)[2] = r3;
+        return 1;
+    }
+    if (lattice == RHOMBOHEDRAL) {
+        // Isotropic, then 1.5 n n^T - I/2 with n along a + b + c.
+        RealType n[3] = {0, 0, 0};
+        for (int r = 0; r < 3; ++r)
+            for (int c = 0; c < 3; ++c) n[r] += cell[r*3 + c];
+        const RealType len = Kokkos::sqrt(n[0]*n[0] + n[1]*n[1] + n[2]*n[2]);
+        for (int r = 0; r < 3; ++r) n[r] /= len;
+        auto emit = [&](int row_idx, const RealType t[3][3]) {
+            RealType v[6] = {t[0][0], t[1][1], t[2][2],
+                             RealType(2)*t[1][2], RealType(2)*t[0][2], RealType(2)*t[0][1]};
+            RealType nrm = 0;
+            for (int i = 0; i < 6; ++i) nrm += v[i]*v[i];
+            nrm = Kokkos::sqrt(nrm);
+            for (int i = 0; i < 6; ++i) basis[row_idx*6 + i] = v[i] / nrm;
+        };
+        const RealType iso[3][3] = {{1,0,0},{0,1,0},{0,0,1}};
+        emit(0, iso);
+        if (max_dof <= 1) return 1;
+        RealType uni[3][3];
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                uni[i][j] = RealType(1.5)*n[i]*n[j]
+                          - RealType(0.5)*(i == j ? RealType(1) : RealType(0));
+        emit(1, uni);
+        return 2;
+    }
+    if (lattice == TETRAGONAL || lattice == HEXAGONAL) {
+        row(0)[0] = row(0)[1] = r2;
+        if (max_dof <= 1) return 1;
+        row(1)[2] = 1;
+        return 2;
+    }
+    if (lattice == ORTHORHOMBIC) {
+        row(0)[0] = 1; if (max_dof <= 1) return 1;
+        row(1)[1] = 1; if (max_dof <= 2) return 2;
+        row(2)[2] = 1;
+        return 3;
+    }
+    if (lattice == MONOCLINIC) {
+        row(0)[0] = 1; row(1)[1] = 1; row(2)[2] = 1;
+        if (max_dof <= 3) return capped(3);
+        row(3)[4] = 1;
+        return 4;
+    }
+    row(0)[0] = 1; row(1)[1] = 1; row(2)[2] = 1;
+    if (max_dof <= 3) return capped(3);
+    row(3)[3] = 1; if (max_dof <= 4) return 4;
+    row(4)[4] = 1; if (max_dof <= 5) return 5;
+    row(5)[5] = 1;
+    return 6;
+}
+
+// Impose the lattice type's rows on every structure in the batch, whatever its
+// operations. TRICLINIC gives the identity: all six strains.
+inline int impose_strain_basis(BatchWorkspace& bws, LatticeType lt) {
+    RealType basis[36];
+    const int n = lattice_strain_basis(lt, nullptr, basis, 6);
+    return batch_set_strain_dofs(bws.geom, bws.dofs, basis, n);
+}
+
+
 // Two charged sites per molecule in a P-1 cell: enough for the Buckingham and
 // electrostatic terms to both contribute a non-trivial cell gradient.
 struct Fixture {
@@ -150,7 +241,7 @@ inline void finish_fixture(Fixture& f) {
     f.bws.dofs.cell_ref    = decltype(f.bws.dofs.cell_ref)("cell_ref", 1, 3, 3);
     f.bws.dofs.strain      = decltype(f.bws.dofs.strain)("strain", 1, 6);
     f.bws.dofs.d_g_strain  = decltype(f.bws.dofs.d_g_strain)("d_g_strain", 1, 6);
-    batch_set_strain_dofs(f.bws.geom, f.bws.dofs, static_cast<int>(TRICLINIC));   // identity basis, 6 DOFs
+    impose_strain_basis(f.bws, TRICLINIC);
     Kokkos::deep_copy(f.bws.dofs.cell_ref, f.bws.geom.cell);
     Kokkos::deep_copy(f.bws.dofs.strain, RealType(0));
     Kokkos::deep_copy(f.bws.dofs.d_g_strain, RealType(0));
@@ -447,7 +538,7 @@ inline Fixture make_fixture_zprime(int n_indep, int n_sites,
     f.bws.dofs.cell_ref   = decltype(f.bws.dofs.cell_ref)("cell_ref", 1, 3, 3);
     f.bws.dofs.strain     = decltype(f.bws.dofs.strain)("strain", 1, 6);
     f.bws.dofs.d_g_strain = decltype(f.bws.dofs.d_g_strain)("d_g_strain", 1, 6);
-    batch_set_strain_dofs(f.bws.geom, f.bws.dofs, static_cast<int>(TRICLINIC));
+    impose_strain_basis(f.bws, TRICLINIC);
     Kokkos::deep_copy(f.bws.dofs.cell_ref, f.bws.geom.cell);
     Kokkos::deep_copy(f.bws.dofs.strain, RealType(0));
     Kokkos::deep_copy(f.bws.dofs.d_g_strain, RealType(0));

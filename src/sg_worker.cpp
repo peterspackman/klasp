@@ -513,17 +513,22 @@ void SGWorker::run_rigid_press(int count) {
     rp.pressure_gpa = rp_pressure_gpa_;
     rp.cell_scale = 0.5;
     rp.max_strain_step = rp_max_strain_step_;
-    auto& sg = get_space_group(space_group_);
-    batch_optimize_rigid_press(bws_, rp, static_cast<int>(sg.lattice));
+    batch_optimize_rigid_press(bws_, rp);
     // Recompute cell_params from the deformed cell on device.
     cell_matrix_to_params_device(bws_.geom, count);
 }
 
 void SGWorker::set_stage_strain_dofs(bool fix_angles) {
     if (fixed_cell_) { bws_.dofs.n_cell_dof = 0; return; }
-    auto& sg = get_space_group(space_group_);
-    batch_set_strain_dofs(bws_.geom, bws_.dofs, static_cast<int>(sg.lattice), fix_angles);
     Kokkos::deep_copy(bws_.dofs.cell_ref, bws_.geom.cell);
+    batch_set_strain_dofs(bws_.tables, bws_.geom, bws_.dofs, fix_angles);
+    Kokkos::deep_copy(bws_.dofs.strain, RealType(0));
+    Kokkos::deep_copy(bws_.dofs.d_g_strain, RealType(0));
+}
+
+void SGWorker::set_stream_strain_dofs(const StreamPool& pool, bool fix_angles) {
+    if (fixed_cell_) { bws_.dofs.n_cell_dof = 0; return; }
+    stream_set_strain_dofs(bws_.tables, pool, bws_.dofs, bws_.geom.n_batch, fix_angles);
     Kokkos::deep_copy(bws_.dofs.strain, RealType(0));
     Kokkos::deep_copy(bws_.dofs.d_g_strain, RealType(0));
 }
@@ -537,8 +542,7 @@ void SGWorker::reanchor_strain(int count, bool next_fix_angles) {
     Kokkos::deep_copy(bws_.dofs.strain, RealType(0));
     batch_setup_cells(bws_.tables, bws_.geom);
     if (fixed_cell_) { bws_.dofs.n_cell_dof = 0; return; }
-    auto& sg = get_space_group(space_group_);
-    batch_set_strain_dofs(bws_.geom, bws_.dofs, static_cast<int>(sg.lattice), next_fix_angles);
+    batch_set_strain_dofs(bws_.tables, bws_.geom, bws_.dofs, next_fix_angles);
     Kokkos::deep_copy(bws_.dofs.d_g_strain, RealType(0));
 }
 
@@ -942,7 +946,7 @@ std::vector<StructureResult> SGWorker::run_batch_stream(int batch) {
     if (stream_stage1_ && raw_pool_.filled > 0) {
         // Use all gen_cap_ slots; empty slots are masked out of every kernel.
         bws_.geom.n_batch = wide_slots_ ? gen_cap_ : batch_size_;
-        set_stage_strain_dofs(s1_spec.fix_angles);
+        set_stream_strain_dofs(raw_pool_, s1_spec.fix_angles);
         apply_stage(s1_spec, run_settings);  // warm_hessian false: nothing upstream
         run_settings.refill_interval = refill_interval_;
         auto ts0 = Clock::now();
@@ -951,7 +955,7 @@ std::vector<StructureResult> SGWorker::run_batch_stream(int batch) {
 
         // Widen the mask for stage 2; the refill re-anchors cell_ref and zeroes
         // strain per slot.
-        set_stage_strain_dofs(s2_spec.fix_angles);
+        set_stream_strain_dofs(pool_, s2_spec.fix_angles);
     }
 
     if (pool_.filled == 0) return {};

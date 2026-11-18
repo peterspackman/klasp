@@ -92,7 +92,6 @@ struct McFill {
     SView3D<RealType, Space> trans, rots;
     SView3D<RealType, Space> cur_t, cur_r, best_t, best_r, best_cell;
     SView2D<RealType, Space> cur_s;
-    SView3D<RealType, Space> basis;
     SView1D<RealType, Space> E_cur, E_best;
     SView1D<int, Space> mv, nacc, slot_entry;
     // Pool side.
@@ -102,7 +101,7 @@ struct McFill {
     SView2D<RealType, Space> p_cp;
     SView1D<int, Space> p_seeds;
     Kokkos::Random_XorShift64_Pool<Space> rng;
-    int ni, ncd, lattice;
+    int ni;
 
     KOKKOS_INLINE_FUNCTION void operator()(const int b, const int src) const {
         for (int r = 0; r < 3; ++r)
@@ -122,15 +121,6 @@ struct McFill {
                 trans(b,k,d) = t; cur_t(b,k,d) = t; best_t(b,k,d) = t;
                 rots(b,k,d)  = r; cur_r(b,k,d) = r; best_r(b,k,d) = r;
             }
-        // The strain basis belongs to the structure, not the slot.
-        if (ncd > 0) {
-            RealType lc[9], lb[36];
-            for (int r = 0; r < 3; ++r)
-                for (int c = 0; c < 3; ++c) lc[r*3 + c] = cellv(b,r,c);
-            build_strain_basis(lattice, lc, lb, ncd);
-            for (int s = 0; s < 6; ++s)
-                for (int v = 0; v < 6; ++v) basis(b,s,v) = lb[s*6 + v];
-        }
         mv(b) = 0; nacc(b) = 0;
         slot_entry(b) = src;
         E_cur(b)  = Kokkos::Experimental::infinity_v<RealType>;
@@ -387,7 +377,7 @@ struct McStepper {
     ForceField ff;
     KernelTimings kt;
 
-    int cap, ni, ncd, lattice;
+    int cap, ni, ncd;
 
     // Per-slot chain state: accepted point, best point seen, counters.
     V3 cur_t, cur_r, best_t, best_r, best_cell;
@@ -404,6 +394,13 @@ struct McStepper {
 
     Vi state;   // the engine's slot lifecycle, also the energy mask
 
+    // Slots whose strain basis a refill could not build.
+    Vi basis_failed;
+    int n_basis_failed() const {
+        auto h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), basis_failed);
+        return h(0);
+    }
+
     McStepper(BatchWorkspaceT<Space>& b, StreamPoolT<Space>& p,
               const BatchOptimizeSettings& settings, const McSettings& m)
         : bws(b), pool(p), es(settings), mc(m),
@@ -414,7 +411,7 @@ struct McStepper {
         cap = bws.geom.n_batch;
         ni  = bws.tables.n_indep;
         ncd = bws.dofs.n_cell_dof;
-        lattice = bws.dofs.cell_dof_lattice;
+        basis_failed = Vi("mc_basis_failed", 1);
 
         cur_t = V3("mc_cur_t", cap, ni, 3); cur_r = V3("mc_cur_r", cap, ni, 3);
         best_t = V3("mc_best_t", cap, ni, 3); best_r = V3("mc_best_r", cap, ni, 3);
@@ -462,8 +459,9 @@ struct McStepper {
                                     bws.geom.n_atoms, bws.tables.ghost_type});
     }
 
-    // No curvature is carried between moves, so neither hook is needed.
-    void on_filled(int) {}
+    // The strain basis belongs to the structure, not the slot. No curvature is
+    // carried between moves.
+    void on_filled(Vi idx, int n) { refill_strain_basis(bws.dofs, idx, n, basis_failed); }
     void after_round() {}
 
     void harvest(Vi idx, int n, int base) {
@@ -481,12 +479,12 @@ struct McStepper {
             bws.geom.cell_params, bws.dofs.strain,
             bws.dofs.translations, bws.dofs.rot_vectors,
             cur_t, cur_r, best_t, best_r, best_cell,
-            cur_s, bws.dofs.cell_dof_basis,
+            cur_s,
             E_cur, E_best, mv, nacc, slot_entry,
             pool.cells.cell, pool.cells.cell_inv, pool.translations, pool.rot_vectors,
             pool.cells.kappa, pool.cells.volume,
             pool.cells.max_hkl, pool.cells.max_shift, pool.cells.cell_params,
-            pool.seeds, rng, ni, ncd, lattice};
+            pool.seeds, rng, ni};
     }
 
     McPropose<Space> proposer() const {
@@ -530,6 +528,7 @@ StreamResult batch_optimize_stream_mc(BatchWorkspaceT<Space>& bws,
 
     const stream::Result r = stream::schedule<Space>(cfg, st);
     pool.consumed += r.n_consumed;
+    warn_strain_refill_failures(st.n_basis_failed());
     const int n = r.n_harvested;
     const int ni = st.ni;
 

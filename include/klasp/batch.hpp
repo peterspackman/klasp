@@ -122,9 +122,6 @@ struct BatchOptimizeSettings {
     // from SamplingPrior::max_volume. 0 disables.
     RealType max_cell_volume = 0.0;
 
-    // Restrict strain DOFs to the diagonal Voigt components 0,1,2 regardless of lattice.
-    bool fix_angles = false;
-
     // Record per-structure convergence diagnostics into BatchOptimizeResult.
     bool store_diagnostics = false;
 
@@ -359,11 +356,16 @@ struct RigidDofStateT {
     SView2D<RealType, Space> strain;         // (batch, 6) Voigt strain components
     int n_cell_dof = 0;                      // active strain DOFs (0 = no cell opt)
     // (batch, 6, 6) row-major: rows 0..n_cell_dof-1 are the allowed Voigt directions
-    // (klasp/strain_basis.hpp). Per structure because the rhombohedral subspace
-    // depends on the 3-fold axis direction.
+    // (klasp/strain_basis.hpp). Per structure because the directions depend on
+    // the cell when an axis of symmetry is not a Cartesian axis.
     SView3D<RealType, Space> cell_dof_basis;
-    // Lattice the basis was built for; -1 = unset.
-    int cell_dof_lattice = -1;
+    // What a refill rebuilds a slot's basis from: the point group's fractional
+    // rotations (n_rot, 9), its strain dimension, and whether the basis is
+    // lengths only. n_rot == 0 means the basis was imposed and is left alone.
+    SView2D<RealType, Space> cell_dof_rot;
+    int cell_dof_n_rot = 0;
+    int cell_dof_dim = 0;
+    bool cell_dof_diag_only = false;
 
     SView3D<RealType, Space> d_gt;           // (batch, n_indep, 3)
     SView3D<RealType, Space> d_gr;           // (batch, n_indep, 3)
@@ -448,15 +450,34 @@ KLASP_POST_PAIRS_DECL(4)
 #undef KLASP_POST_PAIRS_DECL
 
 
-// Fill dofs.cell_dof_basis for each structure from the lattice type, set and
-// return dofs.n_cell_dof. Call once per stage, after cell setup.
-template <typename Space = ExecSpace>
-int batch_set_strain_dofs(const BatchGeometryT<Space>& geom,
-                          RigidDofStateT<Space>& dofs, int lattice_type,
-                          bool fix_angles = false);
+// The point group of the operations in `ops` (all n_symops rotations).
+template <typename Space>
+PointGroup point_group_of(const SymmetryOpsT<Space>& ops);
 
-extern template int batch_set_strain_dofs<ExecSpace>(const BatchGeometry&,
-                                                     RigidDofState&, int, bool);
+extern template PointGroup point_group_of<ExecSpace>(const SymmetryOps&);
+
+// Fill dofs.cell_dof_basis for each structure from the operations' point group
+// and its dofs.cell_ref, which must be set; set and return dofs.n_cell_dof.
+// fix_angles keeps the directions without shear. Throws, naming the structure,
+// when a basis cannot be built or the structures disagree on its size. Call
+// once per stage.
+template <typename Space = ExecSpace>
+int batch_set_strain_dofs(const SymmetryOpsT<Space>& ops, const BatchGeometryT<Space>& geom,
+                          RigidDofStateT<Space>& dofs, bool fix_angles = false);
+
+// The same `n` rows (6x6 row-major `basis`) for every structure.
+template <typename Space = ExecSpace>
+int batch_set_strain_dofs(const BatchGeometryT<Space>& geom, RigidDofStateT<Space>& dofs,
+                          const RealType basis[36], int n);
+
+extern template int batch_set_strain_dofs<ExecSpace>(const SymmetryOps&, const BatchGeometry&,
+                                                     RigidDofState&, bool);
+extern template int batch_set_strain_dofs<ExecSpace>(const BatchGeometry&, RigidDofState&,
+                                                     const RealType*, int);
+
+// One line with the number of strain DOFs; warns when `space_group` (1-230,
+// otherwise ignored) has a different point group from the operations.
+void log_strain_dofs(const PointGroup& ops_pg, int space_group, int n_cell_dof);
 
 // Update cells, volume, max_shift and the hkl box from the Voigt strain, on
 // device. No-op when n_cell_dof == 0.

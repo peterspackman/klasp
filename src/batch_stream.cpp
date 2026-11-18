@@ -91,7 +91,6 @@ struct TrFill {
     SView2D<RealType, Space> b_cp, strain;
     SView3D<RealType, Space> trans, rots, acc_t, acc_r;
     SView2D<RealType, Space> acc_s;
-    SView3D<RealType, Space> basis;
     SView2D<RealType, Space> Dsc;
     SView2D<RealType, Space> body;
     SView1D<int, Space> b_nsites;
@@ -102,7 +101,7 @@ struct TrFill {
     SView1D<RealType, Space> p_kappa, p_vol;
     SView2D<int, Space> p_hkl, p_shift;
     SView2D<RealType, Space> p_cp;
-    int ni, ns, nmd, ncd, ndof, lattice;
+    int ni, ns, nmd, ncd, ndof;
     bool warm_mol;
     RealType DELTA0;
     // Starting precision of the multipole term (1 = single when the hybrid is
@@ -129,16 +128,6 @@ struct TrFill {
                 rots(b,k,d)  = p_rv(src,k,d); acc_r(b,k,d) = p_rv(src,k,d);
             }
         for (int s = 0; s < 6; ++s) acc_s(b,s) = 0;
-        // The strain basis belongs to the structure, not the slot (a rhombohedral
-        // basis follows its own 3-fold axis), so rebuild it on every fill.
-        if (ncd > 0) {
-            RealType lc[9], lb[36];
-            for (int r = 0; r < 3; ++r)
-                for (int c = 0; c < 3; ++c) lc[r*3 + c] = cellv(b,r,c);
-            build_strain_basis(lattice, lc, lb, ncd);
-            for (int s = 0; s < 6; ++s)
-                for (int v = 0; v < 6; ++v) basis(b,s,v) = lb[s*6 + v];
-        }
         // Per-DOF scaling D (rotation ~ R_gyr; strain ~ longest cell edge).
         tr::compute_dof_scaling(b, ni, ns, nmd, ncd, cellv, body, Dsc, b_nsites);
         // Molecular block warm from the pool when enabled; everything else is
@@ -373,7 +362,7 @@ struct TrStepper {
     ForceField ff;
     KernelTimings kt;
 
-    int cap, ni, ns, ncd, nmd, ndof, lattice, max_iters;
+    int cap, ni, ns, ncd, nmd, ndof, max_iters;
     bool to_pool, warm_mol, diag;
     RealType DELTA0, DELTA_STALL, grad_tol;
     tr::TRParams trp;
@@ -402,6 +391,13 @@ struct TrStepper {
 
     // The engine's slot lifecycle, used for the energy mask and Hessian seeding.
     Vi state;
+
+    // Slots whose strain basis a refill could not build.
+    Vi basis_failed;
+    int n_basis_failed() const {
+        auto h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), basis_failed);
+        return h(0);
+    }
     // Host-known (refills happen only at checkpoints), avoiding a device
     // reduction and its sync every iteration.
     bool pending_seed = false;
@@ -417,7 +413,6 @@ struct TrStepper {
         ni  = bws.tables.n_indep;
         ns  = bws.tables.n_sites_per_mol;
         ncd = bws.dofs.n_cell_dof;
-        lattice = bws.dofs.cell_dof_lattice;
         nmd = ni * 6;
         ndof = nmd + ncd;
         max_iters = settings.max_iters_per_slot > 0
@@ -438,6 +433,7 @@ struct TrStepper {
         acc_s = V2("st_acc_s", cap, 6);
         s_gmax = V1("st_gmax", cap); s_grms = V1("st_grms", cap);
         slot_iter = Vi("st_iter", cap); slot_entry = Vi("st_entry", cap);
+        basis_failed = Vi("st_basis_failed", 1);
         s_conv_iter = Vi("st_conv", cap);
         s_restarts = Vi("st_restarts", cap);
         s_wrapped = Vi("st_wrapped", cap);
@@ -525,9 +521,13 @@ struct TrStepper {
         batch_energy_gradient_asymunit<MaxRank>(bws.tables, bws.geom, bws.dofs, es, round, &kt);
     }
 
-    // A refill's init eval lands in the next round, so its Hessian can only be
-    // seeded in after_round(), after that round's accept.
-    void on_filled(int) { pending_seed = true; }
+    // The strain basis belongs to the structure, not the slot, so a refill
+    // rebuilds it. A refill's init eval lands in the next round, so its Hessian
+    // can only be seeded in after_round(), after that round's accept.
+    void on_filled(Vi idx, int n) {
+        refill_strain_basis(bws.dofs, idx, n, basis_failed);
+        pending_seed = true;
+    }
 
     void after_round() {
         // Slots refilled at the last checkpoint have just taken their init eval,
@@ -605,14 +605,14 @@ struct TrStepper {
             bws.geom.kappa, bws.geom.volume, bws.geom.max_hkl, bws.geom.max_shift,
             bws.geom.cell_params, bws.dofs.strain,
             bws.dofs.translations, bws.dofs.rot_vectors, acc_t, acc_r, acc_s,
-            bws.dofs.cell_dof_basis, Dsc,
+            Dsc,
             bws.tables.body_positions, bws.tables.mol_site_count,
             sv, delta, pred,
             s_restarts, slot_iter, s_conv_iter, s_wrapped, slot_entry,
             pool.cells.cell, pool.cells.cell_inv, pool.translations, pool.rot_vectors,
             pool.hess_mol, pool.cells.kappa, pool.cells.volume,
             pool.cells.max_hkl, pool.cells.max_shift, pool.cells.cell_params,
-            ni, ns, nmd, ncd, ndof, lattice, warm_mol, DELTA0,
+            ni, ns, nmd, ncd, ndof, warm_mol, DELTA0,
             s_prec, s_reeval, hybrid ? 1 : 0};
     }
 
@@ -664,6 +664,7 @@ StreamResult batch_optimize_stream_tr(BatchWorkspaceT<Space>& bws,
 
     const stream::Result r = stream::schedule<Space>(cfg, st);
     pool.consumed += r.n_consumed;
+    warn_strain_refill_failures(st.n_basis_failed());
     const int n_harvested = r.n_harvested;
     const int ni = st.ni;
 

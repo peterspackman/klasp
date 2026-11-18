@@ -50,7 +50,7 @@ testing::Fixture wide_fixture(int n) {
     bws.dofs.cell_ref   = decltype(bws.dofs.cell_ref)("cell_ref", n, 3, 3);
     bws.dofs.strain     = decltype(bws.dofs.strain)("strain", n, 6);
     bws.dofs.d_g_strain = decltype(bws.dofs.d_g_strain)("d_g_strain", n, 6);
-    batch_set_strain_dofs(bws.geom, bws.dofs, static_cast<int>(TRICLINIC));
+    testing::impose_strain_basis(bws, TRICLINIC);
     Kokkos::deep_copy(bws.dofs.cell_ref, bws.geom.cell);
     Kokkos::deep_copy(bws.dofs.strain, RealType(0));
     Kokkos::deep_copy(bws.dofs.d_g_strain, RealType(0));

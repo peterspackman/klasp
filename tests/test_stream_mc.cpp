@@ -64,7 +64,7 @@ StreamPool pool_with_seeds(testing::Fixture& f, const std::vector<int>& seeds) {
 
 std::vector<double> run_chain(const std::vector<int>& seeds, int moves) {
     auto f = make_fixture(6.0, 6.8, 7.4, 88.0, 95.0, 103.0);
-    batch_set_strain_dofs(f.bws.geom, f.bws.dofs, static_cast<int>(TRICLINIC));
+    batch_set_strain_dofs(f.bws.tables, f.bws.geom, f.bws.dofs);
     StreamPool pool = pool_with_seeds(f, seeds);
     const auto r = batch_optimize_stream_mc<1>(f.bws, pool, mc_batch_settings(),
                                                mc_chain(moves));

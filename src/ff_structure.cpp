@@ -279,13 +279,12 @@ std::vector<FFStructure> ff_relax(const json& doc_in, const FFRelaxOptions& o) {
     set_starts(bws, l, n_batch);
 
     if (!o.fixed_cell) {
-        const int lattice = lattice_for_cell(l.config.space_group, l.mol.cell_params[3],
-                                             l.mol.cell_params[4], l.mol.cell_params[5]);
         bws.dofs.d_g_strain = SView2D<RealType, ExecSpace>("d_g_strain", n_batch, 6);
         bws.dofs.strain     = SView2D<RealType, ExecSpace>("strain", n_batch, 6);
         bws.dofs.cell_ref   = SView3D<RealType, ExecSpace>("cell_ref", n_batch, 3, 3);
-        batch_set_strain_dofs(bws.geom, bws.dofs, lattice);
         Kokkos::deep_copy(bws.dofs.cell_ref, bws.geom.cell);
+        const int ncd = batch_set_strain_dofs(bws.tables, bws.geom, bws.dofs);
+        log_strain_dofs(point_group_of(bws.tables), l.config.space_group, ncd);
         Kokkos::deep_copy(bws.dofs.strain, RealType(0));
         Kokkos::deep_copy(bws.dofs.d_g_strain, RealType(0));
     }

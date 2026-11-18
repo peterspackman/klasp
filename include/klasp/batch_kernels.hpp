@@ -38,8 +38,7 @@ void batch_energy_gradient_rigid_press(const ModelTablesT<Space>& tables,
 
 template <typename Space = ExecSpace>
 BatchOptimizeResult batch_optimize_rigid_press(BatchWorkspaceT<Space>& bws,
-                                               const BatchOptimizeSettings& settings,
-                                               int lattice_type = 0);
+                                               const BatchOptimizeSettings& settings);
 
 // Seed the scaled Hessian (molecular + strain blocks) for the slots selected by
 // bws.tr.hess_mask, empty meaning all.

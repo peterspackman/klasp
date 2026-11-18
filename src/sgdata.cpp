@@ -80,14 +80,26 @@ const SpaceGroupInfo& get_space_group(int sg_num) {
     return info;
 }
 
-LatticeType lattice_for_cell(int sg_num, double alpha, double beta, double gamma) {
-    if (sg_num < 1 || sg_num > 230) return TRICLINIC;
-    const LatticeType lattice = get_space_group(sg_num).lattice;
-    constexpr double tol = 1e-3;   // degrees
-    const bool hexagonal_setting = std::abs(alpha - 90.0) < tol &&
-                                   std::abs(beta - 90.0) < tol &&
-                                   std::abs(gamma - 120.0) < tol;
-    return lattice == RHOMBOHEDRAL && hexagonal_setting ? HEXAGONAL : lattice;
+std::vector<SpaceGroupSetting> all_space_group_settings() {
+    std::vector<SpaceGroupSetting> out;
+    for (const gemmi::SpaceGroup& sg : gemmi::spacegroup_tables::main) {
+        SpaceGroupSetting s;
+        s.number = sg.number;
+        s.name = sg.xhm();
+        for (const auto& op : sg.operations().all_ops_sorted()) {
+            SymopData d{};
+            for (int r = 0; r < 3; ++r)
+                for (int c = 0; c < 3; ++c)
+                    d.rot[r][c] = static_cast<double>(op.rot[r][c]) / gemmi::Op::DEN;
+            for (int k = 0; k < 3; ++k) {
+                const double t = static_cast<double>(op.tran[k]) / gemmi::Op::DEN;
+                d.trans[k] = t - std::floor(t);
+            }
+            s.ops.push_back(d);
+        }
+        out.push_back(std::move(s));
+    }
+    return out;
 }
 
 }  // namespace klasp

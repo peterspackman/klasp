@@ -47,7 +47,7 @@ double fd_second(testing::Fixture& f, int v, int w, double h) {
 // Returns the worst relative disagreement over the lower triangle.
 double worst_hessian_mismatch(testing::Fixture& f, double h, bool verbose = true,
                               const std::vector<int>* only = nullptr) {
-    batch_set_strain_dofs(f.bws.geom, f.bws.dofs, static_cast<int>(TRICLINIC));   // identity basis, 6 DOFs
+    testing::impose_strain_basis(f.bws, TRICLINIC);
     f.settings.model.wolf = false;                 // plain Ewald erfc, matching the kernel
     f.settings.model.ewald_components = ANALYTIC_TERMS;
 
@@ -93,7 +93,7 @@ TEST_CASE("the analytic strain Hessian matches finite differences",
 
 TEST_CASE("the analytic strain Hessian is symmetric", "[strain][hessian]") {
     auto f = make_fixture(7.0, 7.0, 9.5, 90.0, 90.0, 90.0);
-    batch_set_strain_dofs(f.bws.geom, f.bws.dofs, static_cast<int>(TRICLINIC));
+    testing::impose_strain_basis(f.bws, TRICLINIC);
     f.settings.model.wolf = false;
     f.settings.model.ewald_components = ANALYTIC_TERMS;
     batch_expand_asymmetric_unit<0>(f.bws.tables, f.bws.geom, f.bws.dofs);

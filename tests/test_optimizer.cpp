@@ -50,7 +50,7 @@ BatchOptimizeSettings tr_settings(int iters) {
 TEST_CASE("trust region drives the gradient down from a perturbed start",
           "[optimiser]") {
     auto f = make_fixture(6.0, 6.8, 7.4, 88.0, 95.0, 103.0);
-    batch_set_strain_dofs(f.bws.geom, f.bws.dofs, static_cast<int>(TRICLINIC));
+    batch_set_strain_dofs(f.bws.tables, f.bws.geom, f.bws.dofs);
 
     const auto r = batch_optimize_asymunit<1>(f.bws, tr_settings(60));
     REQUIRE(r.diagnostics.grad_max.extent(0) > 0);
@@ -64,7 +64,7 @@ TEST_CASE("trust region drives the gradient down from a perturbed start",
 // energies and descriptors are read from it.
 TEST_CASE("the energy returned belongs to the geometry returned", "[optimiser]") {
     auto f = make_fixture(6.0, 6.8, 7.4, 88.0, 95.0, 103.0);
-    batch_set_strain_dofs(f.bws.geom, f.bws.dofs, static_cast<int>(TRICLINIC));
+    batch_set_strain_dofs(f.bws.tables, f.bws.geom, f.bws.dofs);
 
     const auto r = batch_optimize_asymunit<1>(f.bws, tr_settings(40));
     const double reported = r.final_energies(0);
@@ -88,7 +88,7 @@ TEST_CASE("the energy returned belongs to the geometry returned", "[optimiser]")
 TEST_CASE("cell optimisation keeps the cell in its lattice type", "[optimiser]") {
     SECTION("tetragonal keeps a == b and all angles 90") {
         auto f = make_fixture(7.0, 7.0, 9.5, 90.0, 90.0, 90.0);
-        batch_set_strain_dofs(f.bws.geom, f.bws.dofs, static_cast<int>(TETRAGONAL));
+        testing::impose_strain_basis(f.bws, TETRAGONAL);
         REQUIRE(f.bws.dofs.n_cell_dof == 2);
 
         const auto before = metric_of(f.bws, 0);
@@ -106,7 +106,7 @@ TEST_CASE("cell optimisation keeps the cell in its lattice type", "[optimiser]")
 
     SECTION("cubic keeps a == b == c") {
         auto f = make_fixture(8.0, 8.0, 8.0, 90.0, 90.0, 90.0);
-        batch_set_strain_dofs(f.bws.geom, f.bws.dofs, static_cast<int>(CUBIC));
+        testing::impose_strain_basis(f.bws, CUBIC);
         REQUIRE(f.bws.dofs.n_cell_dof == 1);
 
         const auto before = metric_of(f.bws, 0);
@@ -122,7 +122,7 @@ TEST_CASE("cell optimisation keeps the cell in its lattice type", "[optimiser]")
 // the optimiser must bring |r| back.
 TEST_CASE("rotations come back to the principal branch", "[optimiser]") {
     auto f = make_fixture(6.0, 6.8, 7.4, 88.0, 95.0, 103.0);
-    batch_set_strain_dofs(f.bws.geom, f.bws.dofs, static_cast<int>(TRICLINIC));
+    batch_set_strain_dofs(f.bws.tables, f.bws.geom, f.bws.dofs);
 
     // Start well past a full turn: the same orientation as |r| - 2*pi, but in
     // the part of the parameterisation where the Jacobian is nearly singular.
@@ -144,7 +144,7 @@ TEST_CASE("rotations come back to the principal branch", "[optimiser]") {
 TEST_CASE("a cell pushed to the strain bound keeps making progress",
           "[optimiser]") {
     auto f = make_fixture(6.0, 6.8, 7.4, 88.0, 95.0, 103.0);
-    batch_set_strain_dofs(f.bws.geom, f.bws.dofs, static_cast<int>(TRICLINIC));
+    batch_set_strain_dofs(f.bws.tables, f.bws.geom, f.bws.dofs);
 
     // Park the reference cell far from where the energy wants it, so the first
     // steps run hard into the bound.

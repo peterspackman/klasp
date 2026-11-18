@@ -16,9 +16,10 @@
 //   void evaluate(int round)
 //       Run the oracle over the live slots.
 //
-//   void on_filled(int n)
-//       n slots were just refilled; work needed after their first evaluation
-//       is latched here and done in after_round().
+//   void on_filled(Kokkos::View<int*, Space> idx, int n)
+//       Slots idx(0..n) were just refilled. Per-slot setup that needs its own
+//       kernel runs here; work needed after their first evaluation is latched
+//       here and done in after_round().
 //
 //   void after_round()
 //       Bookkeeping after accept(), before the next propose().
@@ -110,7 +111,7 @@ Result schedule(const Config& cfg, Stepper& st) {
         if (n <= 0) return;
         FillAndActivate<Space, decltype(st.filler())> fa{st.filler(), state};
         for_slot_pairs<Space>("st_fill", idx, n, base, fa);
-        st.on_filled(n);
+        st.on_filled(idx, n);
     };
 
     // One propose / evaluate / accept cycle over every live slot.

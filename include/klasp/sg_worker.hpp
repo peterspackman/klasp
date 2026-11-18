@@ -394,6 +394,8 @@ private:
     // Set the strain DOF mask for a stage and zero the strain state. Sets
     // bws_.dofs.n_cell_dof, so it must run before the stage starts.
     void set_stage_strain_dofs(bool fix_angles);
+    // The same for a streamed stage over `pool`: each refill builds its slot's rows.
+    void set_stream_strain_dofs(const StreamPool& pool, bool fix_angles);
 
     // Between stages: take the relaxed cell as the new strain reference, refresh
     // the neighbour/Ewald setup against it, and install the next stage's mask.

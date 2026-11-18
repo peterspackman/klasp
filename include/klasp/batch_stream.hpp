@@ -47,6 +47,50 @@ void stream_pool_append(StreamPoolT<Space>& pool, const BatchWorkspaceT<Space>& 
                         const BatchDiagnostics& s1_diag = {},
                         bool with_hessian = true);
 
+// Rebuild the strain basis of slots idx(0..n) from their cell_ref, after a
+// refill. Its own kernel, kept out of the fill functors' register budget. A
+// slot whose basis cannot be built gets no rows (its cell is held) and is
+// counted in failed(0). Does nothing for an imposed basis (cell_dof_n_rot 0).
+template <typename Space>
+void refill_strain_basis(const RigidDofStateT<Space>& dofs, SView1D<int, Space> idx,
+                         int n, SView1D<int, Space> failed) {
+    const int ncd = dofs.n_cell_dof, n_rot = dofs.cell_dof_n_rot, dim = dofs.cell_dof_dim;
+    if (n <= 0 || ncd <= 0 || n_rot <= 0) return;
+    const bool diag_only = dofs.cell_dof_diag_only;
+    auto cell_ref = dofs.cell_ref;
+    auto basis = dofs.cell_dof_basis;
+    auto rot = dofs.cell_dof_rot;
+    Kokkos::parallel_for("st_strain_basis", Kokkos::RangePolicy<Space>(0, n),
+        KOKKOS_LAMBDA(const int j) {
+            const int b = idx(j);
+            RealType lc[9], lb[36];
+            for (int r = 0; r < 3; ++r)
+                for (int c = 0; c < 3; ++c) lc[r*3 + c] = cell_ref(b, r, c);
+            const int got = build_symmetric_strain_basis(lc, rot.data(), n_rot, dim,
+                                                         diag_only, lb);
+            if (got != ncd) {
+                for (int i = 0; i < 36; ++i) lb[i] = 0;
+                Kokkos::atomic_inc(&failed(0));
+            }
+            for (int s = 0; s < 6; ++s)
+                for (int v = 0; v < 6; ++v) basis(b, s, v) = lb[s*6 + v];
+        });
+}
+
+// Warns when refill_strain_basis held any slot's cell.
+void warn_strain_refill_failures(int n_failed);
+
+// batch_set_strain_dofs for a streamed stage: the slots' cells are stale until
+// a refill, so the count is checked over the pool's pending entries instead,
+// and the n_slots slots get empty rows that their refill replaces. Throws,
+// naming the entry, as batch_set_strain_dofs does.
+template <typename Space>
+int stream_set_strain_dofs(const SymmetryOpsT<Space>& ops, const StreamPoolT<Space>& pool,
+                           RigidDofStateT<Space>& dofs, int n_slots, bool fix_angles);
+
+extern template int stream_set_strain_dofs<ExecSpace>(const SymmetryOps&, const StreamPool&,
+                                                      RigidDofState&, int, bool);
+
 // Harvested results, one row per converged/capped pool entry (n <= pool.P).
 // The cell is the optimizer's final matrix in an arbitrary frame.
 struct StreamResult {

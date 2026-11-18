@@ -340,14 +340,12 @@ std::vector<EnergyRow> ff_run_batch(const std::string& path, const EnergyOptions
     if (!o.relax) return rows;
 
     if (!o.fixed_cell) {
-        // One lattice type for the batch: its structures share the operators,
-        // so they share the setting too.
-        const int lt = lattice_for_cell(config.space_group, h_cp(0, 3), h_cp(0, 4), h_cp(0, 5));
         bws.dofs.d_g_strain = SView2D<RealType, ExecSpace>("d_g_strain", n_batch, 6);
         bws.dofs.strain     = SView2D<RealType, ExecSpace>("strain", n_batch, 6);
         bws.dofs.cell_ref   = SView3D<RealType, ExecSpace>("cell_ref", n_batch, 3, 3);
-        batch_set_strain_dofs(bws.geom, bws.dofs, lt);
         Kokkos::deep_copy(bws.dofs.cell_ref, bws.geom.cell);
+        const int ncd = batch_set_strain_dofs(bws.tables, bws.geom, bws.dofs);
+        log_strain_dofs(point_group_of(bws.tables), config.space_group, ncd);
         Kokkos::deep_copy(bws.dofs.strain, RealType(0));
         Kokkos::deep_copy(bws.dofs.d_g_strain, RealType(0));
     }
