@@ -208,6 +208,10 @@ CompackCommand::CompackCommand(CLI::App& parent)
     app_->add_option("--tolerance", o.tolerance,
         "Per-molecule RMSD below which a neighbour counts as matched, Angstrom")
         ->capture_default_str();
+    app_->add_option("--max-rmsd", o.max_rmsd,
+        "Largest RMSD over the whole cluster at which a full match is still the same "
+        "packing, Angstrom (0: no limit). COMPACK practice is 20 molecules within 0.5.")
+        ->capture_default_str();
     app_->add_option("--radius", o.radius, "Neighbour search radius, Angstrom")
         ->capture_default_str();
     app_->add_flag("!--all-atoms", o.heavy_only,

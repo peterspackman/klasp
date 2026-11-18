@@ -631,6 +631,7 @@ compack::PairOptions kernel_pair_options(const PackingCluster& a, const CompackO
                                     : opts.n_neighbours;
     ko.n_untied = a.untied;
     ko.match_tolerance = opts.match_tolerance;
+    ko.max_rmsd = opts.max_rmsd;
     ko.max_iterations = opts.max_iterations;
     ko.allow_inversion = opts.allow_inversion;
     return ko;
@@ -924,12 +925,14 @@ void compack_sweep(const SweepClusters& c, const RigidBody& body,
     compack::PairOptions ko;
     ko.n_neighbours = places;
     ko.match_tolerance = opts.match_tolerance;
+    ko.max_rmsd = opts.max_rmsd;
     ko.max_iterations = opts.max_iterations;
     ko.allow_inversion = opts.allow_inversion;
 
     // The upper triangle, flattened, so every team has work.
     const long n_pairs = static_cast<long>(n) * (n - 1) / 2;
     Kokkos::View<int*, Space> d_nm("compack_nm", n_pairs);
+    Kokkos::View<unsigned char*, Space> d_same("compack_same", n_pairs);
 
     using ScratchD = Kokkos::View<double*, Space::scratch_memory_space,
                                   Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
@@ -964,7 +967,10 @@ void compack_sweep(const SweepClusters& c, const RigidBody& body,
                     d_central(j), &d_pool((std::size_t)j * n_pool), n_pool,
                     kp, buf.data());
                 Kokkos::single(Kokkos::PerTeam(team),
-                               [&]() { d_nm(pair) = r.valid ? r.n_matched : -1; });
+                               [&]() {
+                                   d_nm(pair) = r.valid ? r.n_matched : -1;
+                                   d_same(pair) = (r.valid && r.same_packing) ? 1 : 0;
+                               });
             });
         if (progress) {
             // Fence per chunk so the reported count is accurate.
@@ -976,6 +982,8 @@ void compack_sweep(const SweepClusters& c, const RigidBody& body,
 
     auto h_nm = Kokkos::create_mirror_view(d_nm);
     Kokkos::deep_copy(h_nm, d_nm);
+    auto h_same = Kokkos::create_mirror_view(d_same);
+    Kokkos::deep_copy(h_same, d_same);
     long pair = 0;
     for (int i = 0; i < n; ++i)
         for (int j = i + 1; j < n; ++j, ++pair) {
@@ -983,7 +991,7 @@ void compack_sweep(const SweepClusters& c, const RigidBody& body,
             if (v < 0) continue;
             n_matched[static_cast<std::size_t>(i) * n + j] = v;
             n_matched[static_cast<std::size_t>(j) * n + i] = v;
-            const unsigned char s = (v == places) ? 1 : 0;
+            const unsigned char s = h_same(pair);
             same[static_cast<std::size_t>(i) * n + j] = s;
             same[static_cast<std::size_t>(j) * n + i] = s;
         }

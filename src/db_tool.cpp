@@ -1745,13 +1745,15 @@ void run_compack(const std::string& db_path, const CompackRunOptions& opts) {
                "{} self-symmetry operation{}\n",
                n, bodies[0].m, heavy_only ? "heavy only" : "all atoms",
                bodies[0].n_self_ops(), bodies[0].n_self_ops() == 1 ? "" : "s");
-    logging::info("  cluster {} neighbours, tolerance {:.2f} A, radius {:.1f} A, inversion {}\n",
+    logging::info("  cluster {} neighbours, tolerance {:.2f} A, radius {:.1f} A, inversion {}{}\n",
                opts.n_neighbours, opts.tolerance, opts.radius,
-               opts.allow_inversion ? "allowed" : "not allowed");
+               opts.allow_inversion ? "allowed" : "not allowed",
+               opts.max_rmsd > 0 ? fmt::format(", RMSD at most {:.2f} A", opts.max_rmsd) : "");
 
     CompackOptions copts;
     copts.n_neighbours = opts.n_neighbours;
     copts.match_tolerance = opts.tolerance;
+    copts.max_rmsd = opts.max_rmsd;
     copts.heavy_only = heavy_only;
     copts.allow_inversion = opts.allow_inversion;
     ClusterSpec spec;
@@ -1969,13 +1971,15 @@ void run_compack_explicit(const std::vector<CifStructure>& structures,
                structures.size(), ref_label,
                body.m, heavy_only ? "heavy only" : "all atoms",
                body.n_self_ops(), body.n_self_ops() == 1 ? "" : "s");
-    logging::info("  cluster {} neighbours, tolerance {:.2f} A, radius {:.1f} A, inversion {}\n",
+    logging::info("  cluster {} neighbours, tolerance {:.2f} A, radius {:.1f} A, inversion {}{}\n",
                opts.n_neighbours, opts.tolerance, opts.radius,
-               opts.allow_inversion ? "allowed" : "not allowed");
+               opts.allow_inversion ? "allowed" : "not allowed",
+               opts.max_rmsd > 0 ? fmt::format(", RMSD at most {:.2f} A", opts.max_rmsd) : "");
 
     CompackOptions copts;
     copts.n_neighbours = opts.n_neighbours;
     copts.match_tolerance = opts.tolerance;
+    copts.max_rmsd = opts.max_rmsd;
     copts.heavy_only = heavy_only;
     copts.allow_inversion = opts.allow_inversion;
     ClusterSpec spec;

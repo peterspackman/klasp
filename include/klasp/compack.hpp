@@ -66,6 +66,9 @@ struct CompackOptions {
     int n_neighbours = 15;
     // Per-molecule RMSD below which a neighbour counts as matched.
     double match_tolerance = 1.0;
+    // RMSD over the whole cluster above which even a full match is not the same
+    // packing (0: no limit). COMPACK practice is 20 molecules within 0.5 A.
+    double max_rmsd = 0.0;
     int max_iterations = 8;
     // H positions from X-ray work are unreliable.
     bool heavy_only = true;

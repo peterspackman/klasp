@@ -38,6 +38,7 @@ struct CompackRunOptions {
     int top = 50;                // rows to compare, lowest energy first
     int n_neighbours = 15;
     double tolerance = 1.0;      // Angstrom
+    double max_rmsd = 0.0;       // Angstrom, over the cluster; 0 = no limit
     double radius = 14.0;        // Angstrom
     bool heavy_only = true;
     bool allow_inversion = true;

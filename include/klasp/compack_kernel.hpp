@@ -50,6 +50,8 @@ struct PairOptions {
     int n_neighbours = 15;
     int n_untied = -1;
     double match_tolerance = 1.0;
+    // A full match counts as the same packing only at an RMSD up to this (0: any).
+    double max_rmsd = 0.0;
     int max_iterations = 8;
     bool allow_inversion = false;
 };
@@ -519,7 +521,8 @@ PairResult k_compare_pair_lanes(const Lanes& lanes, const BodyView& body,
     out.n_matched = best_n < 0 ? 0 : best_n;
     out.rmsd = best_rmsd;
     out.inverted = best_inverted;
-    out.same_packing = (out.n_matched == places);
+    out.same_packing = out.n_matched == places
+                    && (opts.max_rmsd <= 0.0 || out.rmsd <= opts.max_rmsd);
     return out;
 }
 

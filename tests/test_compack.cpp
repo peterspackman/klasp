@@ -637,6 +637,32 @@ TEST_CASE("The device-callable kernel agrees with the host implementation",
     }
 }
 
+TEST_CASE("A full match above the RMSD cap is not the same packing", "[compack]") {
+    RigidBody body = asymmetric_body();
+    const double eye[9] = {1,0,0, 0,1,0, 0,0,1};
+    PackingCluster a = lattice_cluster(eye, 6.0, 2);
+    PackingCluster b = a;
+    std::mt19937 rng(5);
+    std::uniform_real_distribution<double> jitter(-0.3, 0.3);
+    for (auto& m : b.neighbours)
+        for (double& c : m.centroid) c += jitter(rng);
+
+    CompackOptions opts;
+    opts.n_neighbours = 15;
+    const CompackResult loose = compack_compare(a, b, body, opts);
+    REQUIRE(loose.n_matched == 15);
+    REQUIRE(loose.same_packing);
+    REQUIRE(loose.rmsd > 0.05);
+
+    opts.max_rmsd = 0.5 * loose.rmsd;
+    const CompackResult capped = compack_compare(a, b, body, opts);
+    CHECK(capped.n_matched == 15);
+    CHECK_FALSE(capped.same_packing);
+
+    opts.max_rmsd = 2.0 * loose.rmsd;
+    CHECK(compack_compare(a, b, body, opts).same_packing);
+}
+
 TEST_CASE("The all-pairs sweep reproduces the one-pair path", "[compack][sweep]") {
     // The team split must not change the answer: checked exactly against the
     // one-pair path compiled for the same device. Across backends the refinement
@@ -687,6 +713,21 @@ TEST_CASE("The all-pairs sweep reproduces the one-pair path", "[compack][sweep]"
     std::vector<unsigned char> same;
     compack_sweep(sc, one[0], opts, nm, same);
     REQUIRE((int)nm.size() == n * n);
+
+    // With an RMSD cap the sweep and the one-pair path still give one verdict.
+    {
+        CompackOptions capped = opts;
+        capped.max_rmsd = 0.05;
+        std::vector<int> nm_c;
+        std::vector<unsigned char> same_c;
+        compack_sweep(sc, one[0], capped, nm_c, same_c);
+        for (int i = 0; i < n; ++i)
+            for (int j = i + 1; j < n; ++j) {
+                const CompackResult r = compack_compare(refs[i], pools[j], one[0], capped);
+                INFO("capped pair " << i << "," << j << "  rmsd " << r.rmsd);
+                CHECK((same_c[(size_t)i * n + j] != 0) == r.same_packing);
+            }
+    }
 
     for (int i = 0; i < n; ++i) {
         REQUIRE(nm[(size_t)i * n + i] == opts.n_neighbours);
