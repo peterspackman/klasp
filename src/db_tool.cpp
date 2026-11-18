@@ -2122,6 +2122,18 @@ void group_and_report(const std::vector<CifPacking>& packings,
             logging::info("   {}\n", labels[i]);
         }
     }
+    if (opts.fit_to_first) {
+        std::vector<CompackResult> fit(n);
+        Kokkos::parallel_for(
+            "compack_fit_to_first", Kokkos::RangePolicy<HostExecSpace>(1, n),
+            [&](const int i) { fit[i] = compare_packings(packings[0], packings[i], body, copts, spec); });
+        Kokkos::fence();
+        logging::info("\nFit to {} (matched of {}, RMSD over the matched molecules):\n",
+                      labels[0], opts.n_neighbours);
+        for (int i = 1; i < n; ++i)
+            logging::info("  {:3d} {:8.4f}  {}\n", fit[i].valid ? fit[i].n_matched : 0,
+                          fit[i].valid ? fit[i].rmsd : -1.0, labels[i]);
+    }
 }
 
 // --- convergence statistics -------------------------------------------------

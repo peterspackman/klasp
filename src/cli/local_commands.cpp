@@ -217,6 +217,10 @@ CompackCommand::CompackCommand(CLI::App& parent)
         "Also try the overlay through an inversion. Right for a centrosymmetric "
         "crystal, whose mirrored cluster is its own, and wrong for a chiral one.");
     app_->add_flag("--matrix", o.matrix, "Also print the full matched-neighbour matrix");
+    app_->add_flag("--fit-to-first", o.fit_to_first,
+        "Also print how well each structure fits the first: molecules matched out of "
+        "--neighbours, and the RMSD over the central molecule and the matched ones. Gives "
+        "the closest structure to a reference even when none is the same packing.");
     app_->add_flag("--progress", o.progress,
         "Draw a progress bar on stderr. The comparison is quadratic in the number of "
         "structures, so a large batch is worth watching.");

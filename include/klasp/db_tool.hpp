@@ -42,6 +42,7 @@ struct CompackRunOptions {
     bool heavy_only = true;
     bool allow_inversion = true;
     bool matrix = false;         // also print the full n-matched matrix
+    bool fit_to_first = false;   // also print each structure's fit to the first
     bool progress = false;       // draw a progress bar on stderr
 
     // How near an atom must land on a same-element atom for an operation to
