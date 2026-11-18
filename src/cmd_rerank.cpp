@@ -17,9 +17,11 @@
 
 #include <filesystem>
 #include <fmt/base.h>
+#include <fmt/format.h>
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -58,8 +60,11 @@ RerankResult cmd_rerank(const RerankOptions& o) {
     PetEvaluator eval(mj, ms);
     BasisConfig basis = load_csp_basis(basis_path, db_path);
 
+    // Continuing the final stage takes duplicates too: its deduplication is redone
+    // afterwards, and a duplicate of a structure that moves can become unique.
+    const bool from_final = from_stage == STAGE_FINAL;
     auto rows = read_landscape(db_path, from_stage, /*filter_sg=*/0, /*max_energy=*/1e30,
-                               /*unique_only=*/true, /*exclude_catastrophes=*/true,
+                               /*unique_only=*/!from_final, /*exclude_catastrophes=*/true,
                                /*catastrophe_threshold=*/-1000.0,
                                /*exclude_warned=*/true,
                                /*only_missing_stage=*/top_up ? STAGE_FINAL : 0);
@@ -96,10 +101,21 @@ RerankResult cmd_rerank(const RerankOptions& o) {
     std::vector<int> zfu(K), sgv(K);
     const bool want_sym = symmetry;
     bool sym_ok = want_sym;
+    // From the final stage, continue from the stored relaxed geometry: its rigid
+    // DOFs are only the parent's placeholders.
+    CSPDatabase src;
+    if (from_final) src.open(db_path);
     for (int i = 0; i < K; ++i) {
         const auto& r = rows[i];
-        structs[i] = expand_rigid_structure(basis, r.space_group, r.cell_params,
-                                            r.translation, r.rotation, r.n_mols);
+        FlexibleStructure fs;
+        if (from_final && !src.read_flexible(r.seed, r.space_group, STAGE_FINAL, fs))
+            throw std::runtime_error(fmt::format(
+                "rerank: sg{} seed{} has no stage-3 geometry to continue from",
+                r.space_group, r.seed));
+        structs[i] = from_final
+            ? from_flexible(fs)
+            : expand_rigid_structure(basis, r.space_group, r.cell_params,
+                                     r.translation, r.rotation, r.n_mols);
         const int N = structs[i].n_atoms();
         const int nop = get_space_group(r.space_group).n_symops;
         sgv[i] = r.space_group;
@@ -121,6 +137,7 @@ RerankResult cmd_rerank(const RerankOptions& o) {
             if (!syms[i].valid() || syms[i].n_full() != N) sym_ok = false;
         }
     }
+    if (from_final) src.close();
 
     // Reject sub-Angstrom clashes before PET: a weak-force model cannot relax them out,
     // and they rank artificially deep in FF energy.
