@@ -6,11 +6,13 @@
 #include "klasp/database.hpp"
 #include "klasp/db_tool.hpp"
 #include "klasp/io.hpp"
+#include "klasp/log.hpp"
 
 #include <sqlite_modern_cpp.h>
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <string>
 #include <utility>
@@ -572,4 +574,30 @@ TEST_CASE("stage-3 rows are deduplicated by their relaxed geometry", "[db][flexi
     CHECK(verdict[1] == std::make_pair(1, -1));
     CHECK(verdict[2] == std::make_pair(0, 1));
     CHECK(verdict[3] == std::make_pair(1, -1));
+}
+
+TEST_CASE("a run directory means csp.db, not every database beside it", "[db]") {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "klasp_run_databases";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    auto touch = [&](const char* name) { std::ofstream(dir / name).put('\0'); };
+
+    touch("csp.db");
+    touch("csp-unpolished.db");
+    {
+        logging::Capture quiet(logging::Level::Error);
+        CHECK(run_databases(dir.string()) == std::vector<std::string>{(dir / "csp.db").string()});
+    }
+
+    fs::remove(dir / "csp.db");
+    touch("csp_rank1.db");
+    touch("csp_rank0.db");
+    CHECK(run_databases(dir.string()) ==
+          std::vector<std::string>{(dir / "csp_rank0.db").string(),
+                                   (dir / "csp_rank1.db").string()});
+
+    const std::string file = (dir / "csp-unpolished.db").string();
+    CHECK(run_databases(file) == std::vector<std::string>{file});
+    fs::remove_all(dir);
 }

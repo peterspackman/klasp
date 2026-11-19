@@ -12,7 +12,9 @@ namespace klasp::cli {
 
 namespace {
 
-const char* const DATABASE_HELP = "Database file (.db) or directory containing csp_rank*.db";
+const char* const DATABASE_HELP =
+    "Database file (.db), or a run directory: its csp.db, or the csp_rank*.db shards of "
+    "an older run. Other databases in the directory are ignored.";
 const char* const BASIS_HELP = "Basis JSON (default: the one the database recorded)";
 const char* const STAGE_HELP = "Optimisation stage to read (0 = the highest present)";
 // extract and prune refuse a partial highest stage rather than read it silently.

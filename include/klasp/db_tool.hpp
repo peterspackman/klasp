@@ -14,6 +14,11 @@ struct BasisConfig;  // include/klasp/io.hpp
 
 // Load the CSP basis for a DB either from an explicit file or from the DB's
 // embedded `basis_json` meta value (host-only: no Kokkos). Throws on failure.
+// The databases of a run: the file itself, or in a directory csp.db, or failing
+// that the csp_rank<N>.db shards older runs wrote. Other databases in the
+// directory, such as backups, are named and left out rather than merged in.
+std::vector<std::string> run_databases(const std::string& path);
+
 BasisConfig load_csp_basis(const std::string& basis_path_opt,
                            const std::string& db_path);
 

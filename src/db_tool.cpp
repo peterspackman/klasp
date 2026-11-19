@@ -37,6 +37,7 @@
 #include <string>
 #include <fstream>
 #include <cmath>
+#include <regex>
 #include <set>
 #include <algorithm>
 #include <filesystem>
@@ -47,6 +48,30 @@
 #include <tuple>
 
 namespace klasp {
+
+std::vector<std::string> run_databases(const std::string& path) {
+    if (!std::filesystem::is_directory(path)) return {path};
+    const std::filesystem::path dir(path);
+    if (std::filesystem::exists(dir / "csp.db")) {
+        std::vector<std::string> others;
+        for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+            const auto name = entry.path().filename().string();
+            if (entry.path().extension() == ".db" && name != "csp.db") others.push_back(name);
+        }
+        std::sort(others.begin(), others.end());
+        for (const auto& name : others)
+            logging::info("  ignoring {} in {}: only csp.db is the run's database\n", name, path);
+        return {(dir / "csp.db").string()};
+    }
+    // Older runs wrote one database per rank.
+    static const std::regex shard(R"(csp_rank\d+\.db)");
+    std::vector<std::string> files;
+    for (const auto& entry : std::filesystem::directory_iterator(dir))
+        if (std::regex_match(entry.path().filename().string(), shard))
+            files.push_back(entry.path().string());
+    std::sort(files.begin(), files.end());
+    return files;
+}
 
 // Allowed disagreement between a stored energy and a fresh single point on the
 // same geometry, kJ/mol.
@@ -519,17 +544,7 @@ ExtractResult cmd_extract(const ExtractOptions& o) {
     const double powder_two_theta_max = o.powder_two_theta_max;
     const int stage = o.filter.stage;
     const std::string& name_override = o.name_override;
-    std::vector<std::string> db_files;
-    if (std::filesystem::is_directory(db_path)) {
-        for (auto& entry : std::filesystem::directory_iterator(db_path)) {
-            auto p = entry.path();
-            if (p.extension() == ".db" && p.filename().string().find("csp") != std::string::npos)
-                db_files.push_back(p.string());
-        }
-        std::sort(db_files.begin(), db_files.end());
-    } else {
-        db_files.push_back(db_path);
-    }
+    std::vector<std::string> db_files = run_databases(db_path);
 
     if (db_files.empty()) {
         logging::info("No database files found in {}\n", db_path);
@@ -951,17 +966,7 @@ PruneResult cmd_prune(const PruneOptions& o) {
     const int stage = o.filter.stage;
     const bool allow_missing_descriptors = o.allow_missing_descriptors;
     const std::string& name_override = o.name_override;
-    std::vector<std::string> db_files;
-    if (std::filesystem::is_directory(db_path)) {
-        for (auto& entry : std::filesystem::directory_iterator(db_path)) {
-            auto p = entry.path();
-            if (p.extension() == ".db" && p.filename().string().find("csp") != std::string::npos)
-                db_files.push_back(p.string());
-        }
-        std::sort(db_files.begin(), db_files.end());
-    } else {
-        db_files.push_back(db_path);
-    }
+    std::vector<std::string> db_files = run_databases(db_path);
     if (db_files.empty()) { logging::info("No database files found in {}\n", db_path); return result; }
     const std::string structure_name = resolve_structure_name(db_files, name_override);
 
@@ -1399,17 +1404,7 @@ CompactResult cmd_compact(const CompactOptions& o) {
     const std::string& basis_path_opt = o.basis_path;
     CompactResult result;
     result.dry_run = dry_run;
-    std::vector<std::string> db_files;
-    if (std::filesystem::is_directory(db_path)) {
-        for (auto& entry : std::filesystem::directory_iterator(db_path)) {
-            auto p = entry.path();
-            if (p.extension() == ".db" && p.filename().string().find("csp") != std::string::npos)
-                db_files.push_back(p.string());
-        }
-        std::sort(db_files.begin(), db_files.end());
-    } else {
-        db_files.push_back(db_path);
-    }
+    std::vector<std::string> db_files = run_databases(db_path);
     if (db_files.empty()) throw std::runtime_error("compact: no database files at " + db_path);
 
     // Dropping is only reversible via --restore, which needs the basis.
@@ -1508,17 +1503,7 @@ SummaryResult cmd_summary(const SummaryOptions& o) {
     const int stage = o.stage;
     SummaryResult result;
     // A single .db or a directory of csp_rank*.db, as in cmd_extract.
-    std::vector<std::string> db_files;
-    if (std::filesystem::is_directory(db_path)) {
-        for (auto& entry : std::filesystem::directory_iterator(db_path)) {
-            auto p = entry.path();
-            if (p.extension() == ".db" && p.filename().string().find("csp") != std::string::npos)
-                db_files.push_back(p.string());
-        }
-        std::sort(db_files.begin(), db_files.end());
-    } else {
-        db_files.push_back(db_path);
-    }
+    std::vector<std::string> db_files = run_databases(db_path);
 
     if (db_files.empty()) { logging::info("No database files in {}\n", db_path); return result; }
     const int read_stage = resolve_stage(db_files, stage, "summary");
@@ -2349,17 +2334,7 @@ ConvergedResult cmd_converged(const ConvergedOptions& o) {
     const int stage = o.stage;
     ConvergedResult result;
 
-    std::vector<std::string> db_files;
-    if (std::filesystem::is_directory(db_path)) {
-        for (auto& entry : std::filesystem::directory_iterator(db_path)) {
-            auto p = entry.path();
-            if (p.extension() == ".db" && p.filename().string().find("csp") != std::string::npos)
-                db_files.push_back(p.string());
-        }
-        std::sort(db_files.begin(), db_files.end());
-    } else {
-        db_files.push_back(db_path);
-    }
+    std::vector<std::string> db_files = run_databases(db_path);
     if (db_files.empty()) { logging::info("No database files in {}\n", db_path); return result; }
     const int read_stage = resolve_stage(db_files, stage, "converged");
 
