@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -135,4 +136,31 @@ TEST_CASE("prune --compack keeps one structure per packing, the lowest", "[csp][
     REQUIRE(plain.ok);
     REQUIRE(merged.ok);
     CHECK(merged.unique <= plain.unique);
+
+    // The CSV names each structure as the CIF does, and gives its stage.
+    {
+        std::ifstream csv(plain.csv_path);
+        std::string header, first;
+        std::getline(csv, header);
+        std::getline(csv, first);
+        CHECK(header.substr(header.size() - 9) == ",stage,id");
+        const std::string id = first.substr(first.rfind(',') + 1);
+        std::ifstream cif(plain.cif_path);
+        std::string block;
+        std::getline(cif, block);
+        CHECK(block == "data_" + id);
+    }
+
+    // --window reads only the structures near the lowest.
+    po.compack = false;
+    po.window = 1.0;
+    po.output_dir = (dir / "window").string();
+    PruneResult windowed;
+    {
+        logging::Capture quiet(logging::Level::Error);
+        windowed = cmd_prune(po);
+    }
+    REQUIRE(windowed.ok);
+    CHECK(windowed.considered < plain.considered);
+    CHECK(windowed.considered >= 1);
 }

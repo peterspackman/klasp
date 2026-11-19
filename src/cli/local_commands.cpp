@@ -176,7 +176,12 @@ PruneCommand::PruneCommand(CLI::App& parent)
     app_->add_option("--top,-n", o.filter.top_n,
         "Output only top N unique structures (0 = all)")
         ->capture_default_str();
-    app_->add_option("--max-energy", o.filter.max_energy, "Maximum energy cutoff (kJ/mol)");
+    app_->add_option("--max-energy", o.filter.max_energy,
+        "Leave out structures above this absolute energy, kJ/mol (see --window for one "
+        "relative to the lowest)");
+    app_->add_option("--window", o.window,
+        "Read only structures within this many kJ/mol of the lowest (0 = all)")
+        ->capture_default_str();
     app_->add_flag("--allow-missing-descriptors", o.allow_missing_descriptors,
         "Proceed even when more than 5% of structures have no descriptor to compare "
         "on. Those are reported unique because nothing could be checked, not because "

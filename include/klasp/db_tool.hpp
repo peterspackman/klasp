@@ -163,6 +163,9 @@ struct PruneOptions {
     // so are reported unique by default.
     bool allow_missing_descriptors = false;
     std::string name_override;
+    // Read only structures within this many kJ/mol of the lowest (0 = all). Unlike
+    // filter.max_energy, which is an absolute energy.
+    double window = 0.0;
 
     // A last merge by packing similarity: structures the descriptors kept apart
     // but COMPACK finds to be one packing keep only their lowest member. Only

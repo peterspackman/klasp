@@ -1008,8 +1008,20 @@ PruneResult cmd_prune(const PruneOptions& o) {
     }
     Landscape land = load_landscape(db_files, lf);
     auto& all_rows = land.rows;
+    if (o.window > 0 && !all_rows.empty()) {
+        // Rows are in ascending energy, so the window is a prefix.
+        const double cut = all_rows.front().energy + o.window;
+        std::size_t k = 0;
+        while (k < all_rows.size() && all_rows[k].energy <= cut) ++k;
+        all_rows.resize(k);
+        land.has_amd.resize(k);
+        land.has_powder.resize(k);
+        land.pdd.resize(k);
+    }
 
-    logging::info("  Loaded {} structures from {} files\n", all_rows.size(), db_files.size());
+    logging::info("  Loaded {} structures from {} files{}\n", all_rows.size(), db_files.size(),
+                  o.window > 0 ? fmt::format(", within {:.1f} kJ/mol of the lowest", o.window)
+                               : std::string());
 
     // Energy-sorted, so lower-energy structures are kept as representatives.
     StructureDedup dedup(dedup_cfg);
@@ -1057,6 +1069,18 @@ PruneResult cmd_prune(const PruneOptions& o) {
                 "--allow-missing-descriptors to proceed anyway.", 100.0 * frac));
     }
 
+    logging::info("  {} unique / {} total ({:.1f}% duplicates removed by descriptors) [{}]\n",
+               unique_indices.size(), all_rows.size(),
+               100.0 * (1.0 - double(unique_indices.size()) / std::max(1.0, double(all_rows.size()))),
+               dedup_cfg.cross_sg ? "cross-SG" : "per-SG");
+    logging::info("  AMD tol={:.3f} Å, energy bin={:.1f} kJ/mol, density bin={:.3f} g/cm³",
+               dedup_cfg.amd_tol, dedup_cfg.energy_bin, dedup_cfg.density_bin);
+    if (need_pdd)
+        logging::info(", PDD RMS tol={:.1e} Å", dedup_cfg.pdd_tol);
+    if (dedup_cfg.use_powder)
+        logging::info(", powder cos_thresh={:.2f}, cdtw_thresh={:.1f}",
+                   dedup_cfg.powder_cos_thresh, dedup_cfg.powder_cdtw_thresh);
+    logging::info("\n");
     if (o.compack && !unique_indices.empty()) {
         const double e0 = all_rows[unique_indices[0]].energy;
         std::vector<int> cand;
@@ -1077,8 +1101,8 @@ PruneResult cmd_prune(const PruneOptions& o) {
         unique_indices.erase(std::remove_if(unique_indices.begin(), unique_indices.end(),
                                             [&](int idx) { return merged.count(idx) > 0; }),
                              unique_indices.end());
-        logging::info("  COMPACK merged {} of {} into the lowest structure of their packing\n",
-                      merged.size(), cand.size());
+        logging::info("  COMPACK merged {} of {} into the lowest structure of their packing, "
+                      "leaving {} unique\n", merged.size(), cand.size(), unique_indices.size());
     }
 
     int n_out = static_cast<int>(unique_indices.size());
@@ -1088,18 +1112,6 @@ PruneResult cmd_prune(const PruneOptions& o) {
     for (auto& r : all_rows) sg_total[r.space_group]++;
     for (int idx : unique_indices) sg_unique[all_rows[idx].space_group]++;
 
-    logging::info("  {} unique / {} total ({:.1f}% duplicates removed) [{}]\n",
-               unique_indices.size(), all_rows.size(),
-               100.0 * (1.0 - double(unique_indices.size()) / std::max(1.0, double(all_rows.size()))),
-               dedup_cfg.cross_sg ? "cross-SG" : "per-SG");
-    logging::info("  AMD tol={:.3f} Å, energy bin={:.1f} kJ/mol, density bin={:.3f} g/cm³",
-               dedup_cfg.amd_tol, dedup_cfg.energy_bin, dedup_cfg.density_bin);
-    if (need_pdd)
-        logging::info(", PDD RMS tol={:.1e} Å", dedup_cfg.pdd_tol);
-    if (dedup_cfg.use_powder)
-        logging::info(", powder cos_thresh={:.2f}, cdtw_thresh={:.1f}",
-                   dedup_cfg.powder_cos_thresh, dedup_cfg.powder_cdtw_thresh);
-    logging::info("\n");
     logging::info("\n  {:>4s}  {:>8s}  {:>8s}  {:>6s}\n", "SG", "total", "unique", "dup%");
     for (auto& [sg, total] : sg_total) {
         int uniq = sg_unique.count(sg) ? sg_unique[sg] : 0;
@@ -1135,16 +1147,18 @@ PruneResult cmd_prune(const PruneOptions& o) {
     std::string csv_path = fmt::format("{}/unique_structures.csv", output_dir);
     {
         std::ofstream csv(csv_path);
-        csv << "rank,seed,sg,energy,density,a,b,c,alpha,beta,gamma\n";
+        csv << "rank,seed,sg,energy,density,a,b,c,alpha,beta,gamma,stage,id\n";
         for (int i = 0; i < n_out; ++i) {
             auto& r = all_rows[unique_indices[i]];
             // cell_params are stored in Bohr; written in Angstrom, as in the CIF.
-            csv << fmt::format("{},{},{},{:.6f},{:.4f},{:.4f},{:.4f},{:.4f},{:.2f},{:.2f},{:.2f}\n",
+            const CspStructureId id{structure_name, "QR", r.space_group, r.seed, r.stage};
+            csv << fmt::format("{},{},{},{:.6f},{:.4f},{:.4f},{:.4f},{:.4f},{:.2f},{:.2f},{:.2f},{},{}\n",
                                i + 1, r.seed, r.space_group, r.energy, r.density,
                                r.cell_params[0] * BOHR_TO_ANGSTROM,
                                r.cell_params[1] * BOHR_TO_ANGSTROM,
                                r.cell_params[2] * BOHR_TO_ANGSTROM,
-                               r.cell_params[3], r.cell_params[4], r.cell_params[5]);
+                               r.cell_params[3], r.cell_params[4], r.cell_params[5],
+                               r.stage, id.block_name());
         }
     }
     logging::info("  Wrote summary to {}\n", csv_path);
