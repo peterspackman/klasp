@@ -65,6 +65,15 @@ struct CompackRunOptions {
 };
 void run_compack(const std::string& db_path, const CompackRunOptions& opts);
 
+// COMPACK groups of `rows`, which must be in ascending energy, printed as run_compack
+// prints them. Element i of the result is the index of the lowest row in row i's
+// packing, i itself when no other row shares it. Explicit geometry is read from
+// `db_files` when the rows' stage stores it.
+std::vector<int> compack_lead(const std::vector<std::string>& db_files,
+                              const BasisConfig& basis,
+                              const std::vector<StructureResult>& rows,
+                              const CompackRunOptions& opts);
+
 // Which of these CIFs are the same packing? The molecule is taken from the
 // first data block and every other structure is fitted to it; a structure of a
 // different compound is reported and skipped.
@@ -149,6 +158,20 @@ struct PruneOptions {
     // so are reported unique by default.
     bool allow_missing_descriptors = false;
     std::string name_override;
+
+    // A last merge by packing similarity: structures the descriptors kept apart
+    // but COMPACK finds to be one packing keep only their lowest member. Only
+    // structures within compack_window kJ/mol of the lowest are compared (0: all),
+    // since the comparison is over every pair.
+    bool compack = false;
+    double compack_window = 10.0;
+    CompackRunOptions compack_opts = [] {
+        CompackRunOptions c;
+        c.n_neighbours = 20;
+        c.tolerance = 1.0;
+        c.max_rmsd = 0.5;
+        return c;
+    }();
 };
 
 struct PruneResult {

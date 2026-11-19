@@ -42,6 +42,7 @@
 #include <filesystem>
 #include <cstring>
 #include <map>
+#include <numeric>
 #include <memory>
 #include <tuple>
 
@@ -1051,6 +1052,30 @@ PruneResult cmd_prune(const PruneOptions& o) {
                 "--allow-missing-descriptors to proceed anyway.", 100.0 * frac));
     }
 
+    if (o.compack && !unique_indices.empty()) {
+        const double e0 = all_rows[unique_indices[0]].energy;
+        std::vector<int> cand;
+        std::vector<StructureResult> cand_rows;
+        for (int idx : unique_indices)
+            if (o.compack_window <= 0 || all_rows[idx].energy - e0 <= o.compack_window) {
+                cand.push_back(idx);
+                cand_rows.push_back(all_rows[idx]);
+            }
+        logging::info("\n  COMPACK over the {} structures within {}:\n", cand.size(),
+                      o.compack_window > 0 ? fmt::format("{:.1f} kJ/mol of the lowest",
+                                                         o.compack_window)
+                                           : std::string("the landscape"));
+        const std::vector<int> lead = compack_lead(db_files, basis, cand_rows, o.compack_opts);
+        std::set<int> merged;
+        for (std::size_t k = 0; k < cand.size(); ++k)
+            if (lead[k] != static_cast<int>(k)) merged.insert(cand[k]);
+        unique_indices.erase(std::remove_if(unique_indices.begin(), unique_indices.end(),
+                                            [&](int idx) { return merged.count(idx) > 0; }),
+                             unique_indices.end());
+        logging::info("  COMPACK merged {} of {} into the lowest structure of their packing\n",
+                      merged.size(), cand.size());
+    }
+
     int n_out = static_cast<int>(unique_indices.size());
     if (top_n > 0 && top_n < n_out) n_out = top_n;
 
@@ -1657,26 +1682,26 @@ SummaryResult cmd_summary(const SummaryOptions& o) {
 
 // --- packing similarity over a landscape ------------------------------------
 
+// groups_out, when given, receives the labels of every group of two or more.
 void run_compack_explicit(const std::vector<CifStructure>& structures,
                           const std::vector<std::string>& labels_in,
-                          const CompackRunOptions& opts);
+                          const CompackRunOptions& opts,
+                          std::vector<std::vector<std::string>>* groups_out = nullptr);
 
 void group_and_report(const std::vector<CifPacking>& packings,
                       const std::vector<std::string>& labels, const RigidBody& body,
                       const CompackRunOptions& opts, const CompackOptions& copts,
-                      const ClusterSpec& spec, double worst_fit);
+                      const ClusterSpec& spec, double worst_fit,
+                      std::vector<std::vector<std::string>>* groups_out = nullptr);
 
-void run_compack(const std::string& db_path, const CompackRunOptions& opts) {
-    const BasisConfig basis = load_csp_basis(opts.basis_path, db_path);
-    auto rows = read_landscape(db_path, opts.stage, /*filter_sg=*/0, /*max_energy=*/1e30,
-                               /*unique_only=*/true, /*exclude_catastrophes=*/true,
-                               /*catastrophe_threshold=*/-1000.0);
-    if (rows.empty()) {
-        logging::info("compack: no unique structures in {}\n", db_path);
-        return;
-    }
-    const int n = std::min<int>(opts.top > 0 ? opts.top : (int)rows.size(), (int)rows.size());
-    rows.resize(n);
+std::vector<int> compack_lead(const std::vector<std::string>& db_files,
+                              const BasisConfig& basis,
+                              const std::vector<StructureResult>& rows,
+                              const CompackRunOptions& opts) {
+    const int n = static_cast<int>(rows.size());
+    std::vector<int> lead(n);
+    std::iota(lead.begin(), lead.end(), 0);
+    if (n == 0) return lead;
 
     const double B = static_cast<double>(BOHR_TO_ANGSTROM);
 
@@ -1691,25 +1716,36 @@ void run_compack(const std::string& db_path, const CompackRunOptions& opts) {
         std::vector<CifStructure> explicit_rows;
         std::vector<std::string> labels;
         int n_flex = 0;
+        std::map<std::string, int> row_of;
         for (int i = 0; i < n; ++i) {
             FlexibleStructure fs;
-            if (!flex.read(db_path, rows[i].seed, rows[i].space_group, rows[i].stage, fs))
-                continue;
+            bool found = false;
+            for (const auto& file : db_files)
+                if ((found = flex.read(file, rows[i].seed, rows[i].space_group, rows[i].stage, fs)))
+                    break;
+            if (!found) continue;
             ++n_flex;
             explicit_rows.push_back(structure_from_cell(fs.cell_params, fs.frac.data(),
                                                         fs.Z.data(), fs.n_atoms, ropts));
             labels.push_back(fmt::format("sg{}/seed{}", rows[i].space_group, rows[i].seed));
+            row_of[labels.back()] = i;
         }
         if (rows[0].stage >= STAGE_FINAL && n_flex < n)
-            require_explicit_geometry({db_path}, rows[0].stage, "compack");
+            require_explicit_geometry(db_files, rows[0].stage, "compack");
         if (n_flex > 0) {
             if (n_flex < n)
                 logging::info("  ! {} of {} structures have explicit atoms and {} do not; "
                            "comparing only the {} that do, since a relaxed geometry and a "
                            "rigid reconstruction of one are not the same structure\n",
                            n_flex, n, n - n_flex, n_flex);
-            run_compack_explicit(explicit_rows, labels, opts);
-            return;
+            std::vector<std::vector<std::string>> label_groups;
+            run_compack_explicit(explicit_rows, labels, opts, &label_groups);
+            for (const auto& g : label_groups) {
+                int m = n;
+                for (const auto& l : g) m = std::min(m, row_of.at(l));
+                for (const auto& l : g) lead[row_of.at(l)] = m;
+            }
+            return lead;
         }
     }
 
@@ -1739,7 +1775,7 @@ void run_compack(const std::string& db_path, const CompackRunOptions& opts) {
     }
     if (bodies.empty() || bodies[0].m == 0) {
         logging::info("compack: the basis has no atoms to compare\n");
-        return;
+        return lead;
     }
     logging::info("compack: {} unique structures, {} atoms per molecule ({}), "
                "{} self-symmetry operation{}\n",
@@ -1925,13 +1961,32 @@ void run_compack(const std::string& db_path, const CompackRunOptions& opts) {
             logging::info("   sg{}/seed{}\n", rows[i].space_group, rows[i].seed);
         }
     }
+    for (const auto& kv : groups) {
+        const int m = *std::min_element(kv.second.begin(), kv.second.end());
+        for (int k : kv.second) lead[k] = m;
+    }
+    return lead;
+}
+
+void run_compack(const std::string& db_path, const CompackRunOptions& opts) {
+    const BasisConfig basis = load_csp_basis(opts.basis_path, db_path);
+    auto rows = read_landscape(db_path, opts.stage, /*filter_sg=*/0, /*max_energy=*/1e30,
+                               /*unique_only=*/true, /*exclude_catastrophes=*/true,
+                               /*catastrophe_threshold=*/-1000.0);
+    if (rows.empty()) {
+        logging::info("compack: no unique structures in {}\n", db_path);
+        return;
+    }
+    rows.resize(std::min<int>(opts.top > 0 ? opts.top : (int)rows.size(), (int)rows.size()));
+    compack_lead({db_path}, basis, rows, opts);
 }
 
 // --- packing similarity over a set of CIF files ------------------------------
 
 void run_compack_explicit(const std::vector<CifStructure>& structures,
                           const std::vector<std::string>& labels_in,
-                          const CompackRunOptions& opts) {
+                          const CompackRunOptions& opts,
+                          std::vector<std::vector<std::string>>* groups_out) {
     if (structures.empty()) {
         logging::info("compack: nothing to compare\n");
         return;
@@ -2023,7 +2078,7 @@ void run_compack_explicit(const std::vector<CifStructure>& structures,
             packings.push_back(std::move(placed[i]));
         }
     }
-    group_and_report(packings, labels, body, opts, copts, spec, worst_fit);
+    group_and_report(packings, labels, body, opts, copts, spec, worst_fit, groups_out);
 }
 
 void run_compack_cifs(const std::vector<std::string>& paths, const CompackRunOptions& opts) {
@@ -2062,7 +2117,8 @@ void run_compack_cifs(const std::vector<std::string>& paths, const CompackRunOpt
 void group_and_report(const std::vector<CifPacking>& packings,
                       const std::vector<std::string>& labels, const RigidBody& body,
                       const CompackRunOptions& opts, const CompackOptions& copts,
-                      const ClusterSpec& spec, double worst_fit) {
+                      const ClusterSpec& spec, double worst_fit,
+                      std::vector<std::vector<std::string>>* groups_out) {
     const int n = static_cast<int>(packings.size());
     if (n < 2) {
         logging::info("compack: {} structure(s) placed; need at least two to compare\n", n);
@@ -2114,6 +2170,10 @@ void group_and_report(const std::vector<CifPacking>& packings,
         logging::info("  {} structures:", members.size());
         for (int i : members) logging::info(" {}", labels[i]);
         logging::info("\n");
+        if (groups_out) {
+            groups_out->emplace_back();
+            for (int i : members) groups_out->back().push_back(labels[i]);
+        }
     }
     if (shown == 0) logging::info("\nEvery structure is a distinct packing.\n");
 

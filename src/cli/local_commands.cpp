@@ -181,6 +181,22 @@ PruneCommand::PruneCommand(CLI::App& parent)
         "anything distinguished them.");
     app_->add_option("--stage", o.filter.stage, PARTIAL_STAGE_HELP)->capture_default_str();
     add_structure_filter_options(app_, o.filter);
+    app_->add_flag("--compack", o.compack,
+        "After deduplication, merge structures that COMPACK finds to be one packing, "
+        "keeping the lowest of each. Catches pairs the descriptors keep apart, such as "
+        "near-identical minima that differ in density along a soft mode.");
+    app_->add_option("--compack-window", o.compack_window,
+        "Compare only structures within this many kJ/mol of the lowest (0 = all). The "
+        "comparison is over every pair, so its cost grows with the square of the count.")
+        ->capture_default_str();
+    app_->add_option("--compack-neighbours", o.compack_opts.n_neighbours,
+        "Cluster size for --compack")->capture_default_str();
+    app_->add_option("--compack-tolerance", o.compack_opts.tolerance,
+        "Per-molecule RMSD below which a neighbour counts as matched, Angstrom")
+        ->capture_default_str();
+    app_->add_option("--compack-max-rmsd", o.compack_opts.max_rmsd,
+        "Largest RMSD over the cluster at which a full match is the same packing, "
+        "Angstrom (0: no limit)")->capture_default_str();
 }
 
 int PruneCommand::run() {

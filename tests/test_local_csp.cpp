@@ -3,6 +3,8 @@
 
 #include "klasp/csp_run.hpp"
 #include "klasp/config.hpp"
+#include "klasp/db_tool.hpp"
+#include "klasp/io.hpp"
 #include "klasp/log.hpp"
 
 #include <sqlite_modern_cpp.h>
@@ -83,4 +85,54 @@ TEST_CASE("a CSP with no MPI produces the landscape the MPI path does",
     CHECK_FALSE(result.stopped_early);
 
     std::filesystem::remove_all(mpi_dir.parent_path());
+}
+
+TEST_CASE("prune --compack keeps one structure per packing, the lowest", "[csp][local][compack]") {
+    const auto input = std::filesystem::path(KLASP_SOURCE_DIR)
+                     / "example-inputs" / "acetic_acid.json";
+    const auto dir = scratch("compack");
+    RunConfig cfg;
+    cfg.control.basis_paths = {input.string()};
+    cfg.control.space_groups = {14};
+    cfg.control.targets[14] = 24;
+    cfg.output.dir = dir.string();
+    {
+        logging::Capture quiet(logging::Level::Error);
+        run_local_csp(cfg);
+    }
+    const std::string db = (dir / "csp.db").string();
+
+    // The lowest structure again under another seed: the same packing, by construction.
+    auto rows = read_landscape(db, 2, 0, 1e30, /*unique_only=*/true, true, -1000.0);
+    REQUIRE(rows.size() >= 2);
+    StructureResult copy = rows[0];
+    copy.seed += 1000000;
+    rows.insert(rows.begin() + 1, copy);
+
+    PruneOptions po;
+    const BasisConfig basis = load_csp_basis("", db);
+    std::vector<int> lead;
+    {
+        logging::Capture quiet(logging::Level::Error);
+        lead = compack_lead({db}, basis, rows, po.compack_opts);
+    }
+    REQUIRE(lead.size() == rows.size());
+    CHECK(lead[0] == 0);
+    CHECK(lead[1] == 0);
+    for (std::size_t i = 0; i < lead.size(); ++i) CHECK(lead[i] <= static_cast<int>(i));
+
+    // Merging can only remove structures from what prune writes.
+    po.db_path = db;
+    po.output_dir = (dir / "plain").string();
+    PruneResult plain, merged;
+    {
+        logging::Capture quiet(logging::Level::Error);
+        plain = cmd_prune(po);
+        po.compack = true;
+        po.output_dir = (dir / "merged").string();
+        merged = cmd_prune(po);
+    }
+    REQUIRE(plain.ok);
+    REQUIRE(merged.ok);
+    CHECK(merged.unique <= plain.unique);
 }
